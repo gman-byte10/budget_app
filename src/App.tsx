@@ -2,6 +2,7 @@ import { useEffect, useState, lazy, Suspense } from 'react'
 import { Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { ensureSeeded } from './db/seed'
 import { processDueRecurring } from './lib/recurring'
+import { initSync, syncConfigured, syncPull } from './lib/sync'
 import { useSettings } from './state/useSettings'
 import { configureMoney } from './lib/money'
 import { streakLoggedToday } from './state/actions'
@@ -27,6 +28,10 @@ function useBootstrap() {
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     ensureSeeded()
+      .then(() => {
+        initSync() // set up write-hooks + focus pulling
+        return syncConfigured() ? syncPull() : undefined // adopt newer cloud data first
+      })
       .then(() => processDueRecurring())
       .then(() => setReady(true))
       .catch((e) => setError(String((e as Error)?.message || e)))

@@ -37,6 +37,41 @@ function keyFor(provider, fromBody) {
   return env ? process.env[env] : undefined
 }
 
+// ---- Sync store: tiny key/value for cross-device sync. -----------------------
+// Stores ONLY client-encrypted blobs (the server can't read your data). Uses
+// Upstash Redis REST when configured (durable, free); falls back to in-memory
+// for local dev. Each value is JSON: { payload: <ciphertext>, updatedAt: <ms> }.
+const UP_URL = process.env.UPSTASH_REDIS_REST_URL
+const UP_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN
+const memStore = new Map()
+
+async function upstash(command) {
+  const r = await fetch(UP_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${UP_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(command),
+  })
+  const j = await r.json()
+  if (!r.ok) throw new Error(j.error || 'Upstash error')
+  return j.result
+}
+
+async function kvGet(key) {
+  if (UP_URL && UP_TOKEN) {
+    const v = await upstash(['GET', key])
+    return v ? JSON.parse(v) : null
+  }
+  return memStore.get(key) ?? null
+}
+
+async function kvSet(key, value) {
+  if (UP_URL && UP_TOKEN) {
+    await upstash(['SET', key, JSON.stringify(value)])
+    return
+  }
+  memStore.set(key, value)
+}
+
 // ---- Provider adapters: build request, return {text, inputTokens, outputTokens}
 async function callOpenAI({ model, system, prompt, maxTokens, apiKey }) {
   const r = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -179,9 +214,45 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // Pull the latest encrypted blob for a sync key.
+  if (req.url === '/api/sync/get' && req.method === 'POST') {
+    try {
+      const { key } = JSON.parse(await readBody(req))
+      if (!key) throw new Error('Missing key')
+      const value = await kvGet(`sync:${key}`)
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(value)) // {payload, updatedAt} or null
+    } catch (e) {
+      res.writeHead(502, { 'Content-Type': 'text/plain' })
+      res.end(String(e.message || e))
+    }
+    return
+  }
+
+  // Store an encrypted blob — last-write-wins by updatedAt (rejects stale writes).
+  if (req.url === '/api/sync/put' && req.method === 'POST') {
+    try {
+      const { key, payload, updatedAt } = JSON.parse(await readBody(req))
+      if (!key || typeof payload !== 'string' || !updatedAt) throw new Error('Bad sync payload')
+      const current = await kvGet(`sync:${key}`)
+      if (current && current.updatedAt > updatedAt) {
+        // Someone else wrote a newer copy — tell the client to reconcile.
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        return res.end(JSON.stringify({ ok: false, stale: true, server: current }))
+      }
+      await kvSet(`sync:${key}`, { payload, updatedAt })
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, updatedAt }))
+    } catch (e) {
+      res.writeHead(502, { 'Content-Type': 'text/plain' })
+      res.end(String(e.message || e))
+    }
+    return
+  }
+
   if (req.url === '/api/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' })
-    return res.end(JSON.stringify({ ok: true }))
+    return res.end(JSON.stringify({ ok: true, sync: !!(UP_URL && UP_TOKEN) }))
   }
 
   return serveStatic(req, res)

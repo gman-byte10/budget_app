@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, uid } from '../db/db'
@@ -6,6 +6,15 @@ import { useSettings, updateSettings } from '../state/useSettings'
 import { downloadBackup, importAll } from '../lib/backup'
 import { loadDemoData } from '../lib/demo'
 import { hasPin, setPin, clearPin } from '../lib/pin'
+import {
+  getSyncState,
+  onSyncChange,
+  enableSync,
+  adoptRemote,
+  overwriteRemote,
+  disableSync,
+  syncNow,
+} from '../lib/sync'
 import { money } from '../lib/money'
 import { currentMonthKey } from '../lib/dates'
 import { resolveModel, TASK_TIER, TIERS, type LlmTask, type Provider } from '../llm/config'
@@ -123,6 +132,9 @@ export default function Settings() {
 
       <SectionTitle>AI assist</SectionTitle>
       <AiSettings />
+
+      <SectionTitle>Sync across devices</SectionTitle>
+      <SyncSection />
 
       <SectionTitle>Security</SectionTitle>
       <SecuritySection />
@@ -564,6 +576,158 @@ function PinSetSheet({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
       >
         Save PIN
       </Button>
+    </Sheet>
+  )
+}
+
+function timeAgo(ms: number): string {
+  const s = Math.floor((Date.now() - ms) / 1000)
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
+  return `${Math.floor(s / 86400)}d ago`
+}
+
+function SyncSection() {
+  const [s, setS] = useState(getSyncState())
+  const [setup, setSetup] = useState(false)
+  useEffect(() => onSyncChange(() => setS({ ...getSyncState() })), [])
+
+  return (
+    <Card className="p-4">
+      {!s.configured ? (
+        <>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">Device sync</p>
+              <p className="text-xs text-ink-faint">Off</p>
+            </div>
+            <Button variant="soft" className="py-2" onClick={() => setSetup(true)}>
+              Set up
+            </Button>
+          </div>
+          <p className="text-xs text-ink-faint mt-2">
+            Use the same data on your phone and laptop. Your data is encrypted on this device before
+            syncing — the server can't read it.
+          </p>
+        </>
+      ) : (
+        <>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">Device sync · On</p>
+              <p className="text-xs text-ink-faint">
+                {s.syncing
+                  ? 'Syncing…'
+                  : s.error
+                    ? `⚠️ ${s.error}`
+                    : s.lastSyncedAt
+                      ? `Synced ${timeAgo(s.lastSyncedAt)}`
+                      : 'Ready'}
+              </p>
+            </div>
+            <Button variant="soft" className="py-2" onClick={syncNow} disabled={s.syncing}>
+              Sync now
+            </Button>
+          </div>
+          <Button
+            variant="danger"
+            className="w-full mt-3 py-2"
+            onClick={() => {
+              if (confirm('Turn off sync on this device? Your data stays here; it just stops syncing.'))
+                disableSync()
+            }}
+          >
+            Turn off sync
+          </Button>
+        </>
+      )}
+      {setup && <SyncSetupSheet onClose={() => setSetup(false)} />}
+    </Card>
+  )
+}
+
+function SyncSetupSheet({ onClose }: { onClose: () => void }) {
+  const [pass, setPassVal] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [phase, setPhase] = useState<'enter' | 'choose' | 'busy'>('enter')
+  const [err, setErr] = useState('')
+  const valid = pass.length >= 6 && pass === confirm
+
+  async function go() {
+    setPhase('busy')
+    setErr('')
+    try {
+      const r = await enableSync(pass)
+      if (r === 'pushed') onClose()
+      else setPhase('choose')
+    } catch (e) {
+      setErr(String((e as Error).message || e))
+      setPhase('enter')
+    }
+  }
+
+  return (
+    <Sheet title="Set up device sync" onClose={onClose}>
+      {phase === 'choose' ? (
+        <>
+          <p className="text-sm text-ink-soft mb-3">
+            There's already synced data in the cloud for this passphrase. Which should win?
+          </p>
+          <Button
+            className="w-full"
+            onClick={async () => {
+              setPhase('busy')
+              await adoptRemote()
+              onClose()
+            }}
+          >
+            Use cloud data (replace this device)
+          </Button>
+          <Button
+            variant="ghost"
+            className="w-full mt-2 border border-line"
+            onClick={async () => {
+              setPhase('busy')
+              await overwriteRemote()
+              onClose()
+            }}
+          >
+            Upload this device (replace cloud)
+          </Button>
+        </>
+      ) : (
+        <>
+          <Field label="Sync passphrase (6+ characters)">
+            <input
+              autoFocus
+              type="password"
+              value={pass}
+              onChange={(e) => setPassVal(e.target.value)}
+              placeholder="Choose a strong passphrase"
+              className="w-full rounded-xl border border-line bg-surface px-3 py-3 outline-none focus:border-brand"
+            />
+          </Field>
+          <Field label="Confirm passphrase">
+            <input
+              type="password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              placeholder="Re-enter it"
+              className="w-full rounded-xl border border-line bg-surface px-3 py-3 outline-none focus:border-brand"
+            />
+          </Field>
+          {confirm.length > 0 && pass !== confirm && <p className="text-xs text-neg mb-2">Passphrases don't match.</p>}
+          {err && <p className="text-xs text-neg mb-2">{err}</p>}
+          <p className="text-xs text-ink-faint mb-3">
+            Use the <b>same passphrase</b> on every device. It encrypts your data — if you forget it, the
+            cloud copy can't be recovered (each device still keeps its own copy).
+          </p>
+          <Button className="w-full" disabled={!valid || phase === 'busy'} onClick={go}>
+            {phase === 'busy' ? 'Working…' : 'Turn on sync'}
+          </Button>
+        </>
+      )}
     </Sheet>
   )
 }
