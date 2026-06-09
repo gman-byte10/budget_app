@@ -1,0 +1,13 @@
+# Render Blueprint — deploys the budget app + AI proxy as one free Node web service.
+# The proxy (server/proxy.mjs) serves the built app (dist/) and the /api/llm endpoint.
+# Do NOT add OPENAI/ANTHROPIC/GOOGLE keys here — keys are entered in the app and sent
+# per request, so the public endpoint is useless to strangers.
+services:
+  - type: web
+    name: budget
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run proxy
+    healthCheckPath: /api/health
+    autoDeploy: true

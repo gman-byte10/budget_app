@@ -1,0 +1,6 @@
+{
+  "_comment": "Optional. Copy to keys.json to keep API keys entirely off the browser. The app's Settings → AI key fields take precedence if filled. keys.json is gitignored.",
+  "openai": "",
+  "anthropic": "",
+  "google": ""
+}
