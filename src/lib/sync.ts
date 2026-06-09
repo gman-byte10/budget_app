@@ -105,7 +105,7 @@ async function remoteGet(pass: string): Promise<Blob | null> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ key }),
   })
-  if (!r.ok) throw new Error(`Sync server error (${r.status})`)
+  if (!r.ok) throw new Error((await r.text().catch(() => '')) || `Sync server error (${r.status})`)
   return (await r.json()) as Blob | null
 }
 async function remotePut(pass: string, payload: string, updatedAt: number) {
@@ -115,7 +115,7 @@ async function remotePut(pass: string, payload: string, updatedAt: number) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ key, payload, updatedAt }),
   })
-  if (!r.ok) throw new Error(`Sync server error (${r.status})`)
+  if (!r.ok) throw new Error((await r.text().catch(() => '')) || `Sync server error (${r.status})`)
   return (await r.json()) as { ok: boolean; stale?: boolean; server?: Blob; updatedAt?: number }
 }
 
