@@ -28,6 +28,7 @@ export default function Budgets() {
   const [editingGroup, setEditingGroup] = useState<Group | 'new' | null>(null)
   const [newFundCard, setNewFundCard] = useState<{ id: string; name: string } | undefined>()
   const [newCatGroupId, setNewCatGroupId] = useState<string | undefined>()
+  const [addToGroup, setAddToGroup] = useState<Group | null>(null)
   const [acting, setActing] = useState<CategoryBudgetRow | null>(null)
   const [reordering, setReordering] = useState(false)
   const [dismissedNudge, setDismissedNudge] = useState(
@@ -88,10 +89,10 @@ export default function Budgets() {
         <div className="flex items-center justify-between px-1 mb-1.5">
           <button
             onClick={group && !reordering ? () => setEditingGroup(group) : undefined}
-            className="flex items-center gap-2 min-w-0"
+            className="flex items-center gap-2 flex-wrap text-left flex-1 min-w-0 pr-2"
           >
             <span>{group?.emoji ?? '📂'}</span>
-            <span className="font-semibold truncate">{group?.name ?? 'Ungrouped'}</span>
+            <span className="font-semibold">{group?.name ?? 'Ungrouped'}</span>
             {group?.committed && (
               <span className="text-[10px] text-ink-faint border border-line rounded-full px-1.5 py-0.5 shrink-0">committed</span>
             )}
@@ -110,10 +111,7 @@ export default function Budgets() {
                 )}
                 {group && !closed && (
                   <button
-                    onClick={() => {
-                      setNewCatGroupId(group.id)
-                      setEditing('new')
-                    }}
+                    onClick={() => setAddToGroup(group)}
                     className="text-brand text-base font-bold w-7 leading-none"
                     aria-label="Add category to section"
                   >
@@ -298,6 +296,18 @@ export default function Budgets() {
         <GroupEditor group={editingGroup === 'new' ? null : editingGroup} onClose={() => setEditingGroup(null)} />
       )}
 
+      {addToGroup && (
+        <AddToSectionSheet
+          group={addToGroup}
+          onClose={() => setAddToGroup(null)}
+          onNewCategory={() => {
+            setNewCatGroupId(addToGroup.id)
+            setAddToGroup(null)
+            setEditing('new')
+          }}
+        />
+      )}
+
       {acting && (
         <RowActionSheet
           row={acting}
@@ -323,9 +333,17 @@ function RowActionSheet({
   onEdit: () => void
 }) {
   const accounts = useActiveAccounts()
+  const groups = useLiveQuery(() => db.groups.filter((g) => !g.archived).sortBy('order'), [], [])
   const toast = useToast()
   const isFund = !!row.category.linkedAccountId
-  const [mode, setMode] = useState<'menu' | 'log' | 'pay'>('menu')
+  const [mode, setMode] = useState<'menu' | 'log' | 'pay' | 'move'>('menu')
+
+  async function moveToSection(groupId: string | undefined) {
+    await db.categories.update(row.category.id, { groupId })
+    const g = groups.find((x) => x.id === groupId)
+    toast(g ? `Moved to ${g.name}` : 'Removed from section')
+    onClose()
+  }
   // Pre-fill a card payment with what's still planned to pay this month.
   const [amountStr, setAmountStr] = useState(() => {
     const left = round2(row.effective - row.spent)
@@ -373,10 +391,42 @@ function RowActionSheet({
           <Button className="w-full" onClick={() => setMode(isFund ? 'pay' : 'log')}>
             {isFund ? '💳 Make a payment' : '＋ Log expense'}
           </Button>
+          <Button variant="soft" className="w-full mt-2" onClick={() => setMode('move')}>
+            ↪ Move to section
+          </Button>
           <Button variant="ghost" className="w-full mt-2 border border-line" onClick={onEdit}>
             Edit category
           </Button>
         </>
+      )}
+
+      {mode === 'move' && (
+        <div className="space-y-2">
+          <p className="text-xs text-ink-faint px-1">Move “{row.category.name}” to:</p>
+          {groups.map((g) => (
+            <button
+              key={g.id}
+              onClick={() => moveToSection(g.id)}
+              disabled={g.id === row.category.groupId}
+              className="w-full flex items-center justify-between rounded-xl border border-line bg-surface px-3 py-3 active:bg-canvas disabled:opacity-40"
+            >
+              <span className="font-medium">
+                {g.emoji} {g.name}
+              </span>
+              {g.id === row.category.groupId && <span className="text-xs text-ink-faint">current</span>}
+            </button>
+          ))}
+          <button
+            onClick={() => moveToSection(undefined)}
+            disabled={!row.category.groupId}
+            className="w-full flex items-center justify-between rounded-xl border border-line bg-surface px-3 py-3 active:bg-canvas disabled:opacity-40"
+          >
+            <span className="font-medium">📂 Ungrouped (remove from section)</span>
+          </button>
+          <Button variant="ghost" className="w-full border border-line" onClick={() => setMode('menu')}>
+            Back
+          </Button>
+        </div>
       )}
 
       {(mode === 'log' || mode === 'pay') && (
@@ -833,6 +883,54 @@ function GroupEditor({ group, onClose }: { group: Group | null; onClose: () => v
         <Button variant="danger" onClick={remove} className="w-full mt-2">
           Delete section
         </Button>
+      )}
+    </Sheet>
+  )
+}
+
+function AddToSectionSheet({
+  group,
+  onClose,
+  onNewCategory,
+}: {
+  group: Group
+  onClose: () => void
+  onNewCategory: () => void
+}) {
+  const toast = useToast()
+  const cats = useLiveQuery(
+    () =>
+      db.categories
+        .filter((c) => c.kind === 'expense' && !c.archived && c.groupId !== group.id)
+        .sortBy('order'),
+    [group.id],
+    [],
+  )
+  return (
+    <Sheet title={`Add to ${group.emoji ?? ''} ${group.name}`} onClose={onClose}>
+      <Button className="w-full" onClick={onNewCategory}>
+        ＋ New category
+      </Button>
+      {cats.length > 0 && (
+        <>
+          <p className="text-xs text-ink-faint mt-4 mb-1 px-1">Or move an existing one here:</p>
+          <div className="space-y-2">
+            {cats.map((c) => (
+              <button
+                key={c.id}
+                onClick={async () => {
+                  await db.categories.update(c.id, { groupId: group.id })
+                  toast(`Moved ${c.name} to ${group.name}`)
+                  onClose()
+                }}
+                className="w-full flex items-center gap-2 rounded-xl border border-line bg-surface px-3 py-3 active:bg-canvas"
+              >
+                <span>{c.emoji}</span>
+                <span className="font-medium">{c.name}</span>
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </Sheet>
   )
