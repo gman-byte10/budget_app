@@ -485,10 +485,10 @@ function BudgetRow({
   const tone = remaining < 0 ? 'neg' : row.spent / Math.max(row.effective, 1) > 0.85 ? 'warn' : 'brand'
   return (
     <Card className="p-4" onClick={reordering ? undefined : onClick}>
-      <div className="flex items-center justify-between">
-        <span className="flex items-center gap-2 font-semibold min-w-0">
+      <div className="flex items-start justify-between gap-2">
+        <span className="flex items-center gap-2 font-semibold min-w-0 flex-wrap flex-1 pr-1">
           <span className="text-lg">{isFund ? '💳' : row.category.emoji}</span>
-          <span className="truncate">{row.category.name}</span>
+          <span className="break-words">{row.category.name}</span>
           {isFund ? (
             <span className="text-[10px] text-warn bg-warn-soft px-1.5 py-0.5 rounded-full shrink-0">card payment</span>
           ) : (

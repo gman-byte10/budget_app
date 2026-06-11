@@ -43,10 +43,10 @@ export default function Accounts() {
             className="p-4 flex items-center justify-between"
             onClick={reordering ? undefined : () => navigate(`/accounts/${a.id}`)}
           >
-            <div className="flex items-center gap-3 min-w-0">
-              <span className="text-2xl">{accountEmoji(a.type)}</span>
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              <span className="text-2xl shrink-0">{accountEmoji(a.type)}</span>
               <div className="min-w-0">
-                <p className="font-semibold truncate">{a.name}</p>
+                <p className="font-semibold break-words">{a.name}</p>
                 <p className="text-xs text-ink-faint capitalize">{a.type}</p>
               </div>
             </div>
