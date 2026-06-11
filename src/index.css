@@ -58,9 +58,10 @@ body {
   font-family: var(--font-sans);
   background: var(--color-canvas);
   color: var(--color-ink);
-  /* Respect notches / home indicator when installed as a PWA */
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
-    env(safe-area-inset-left);
+  /* Horizontal notch insets only; the header/nav handle top/bottom insets so the
+     100dvh app shell doesn't overflow. */
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
   overscroll-behavior-y: none;
   -webkit-font-smoothing: antialiased;
 }

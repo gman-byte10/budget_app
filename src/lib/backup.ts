@@ -4,6 +4,7 @@ import { todayStr } from './dates'
 const TABLES = [
   'accounts',
   'categories',
+  'groups',
   'transactions',
   'budgets',
   'snapshots',

@@ -97,9 +97,9 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen max-w-md mx-auto flex flex-col">
+    <div className="h-[100dvh] max-w-md mx-auto flex flex-col overflow-hidden">
       <Header />
-      <main className="flex-1 px-4 pb-28">
+      <main className="flex-1 overflow-y-auto px-4 pb-8">
         <ErrorBoundary key={location.pathname}>
         <Routes>
           <Route path="/" element={<Dashboard />} />
@@ -132,7 +132,7 @@ function Header() {
   const navigate = useNavigate()
   const onStreak = streakLoggedToday(settings.streak.lastLogDate)
   return (
-    <header className="sticky top-0 z-10 bg-canvas/90 backdrop-blur px-4 pt-3 pb-2 flex items-center justify-between">
+    <header className="shrink-0 z-10 bg-canvas px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2 flex items-center justify-between">
       <button onClick={() => navigate('/')} className="text-lg font-bold tracking-tight">
         Budget
       </button>
@@ -176,8 +176,8 @@ function TabBar() {
   const isActive = (to: string) =>
     to === '/' ? location.pathname === '/' : location.pathname.startsWith(to)
   return (
-    <nav className="fixed bottom-0 inset-x-0 z-20">
-      <div className="max-w-md mx-auto px-4 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 bg-surface/95 backdrop-blur border-t border-line">
+    <nav className="shrink-0 z-20">
+      <div className="px-4 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 bg-surface border-t border-line">
         <div className="flex items-center justify-between">
           {tabs.slice(0, 2).map((t) => (
             <Tab key={t.to} {...t} active={isActive(t.to)} />
