@@ -18,13 +18,16 @@ import {
   getMonthlyTrend,
   getNetWorthSeries,
   getMonthDailySpend,
+  getMonthComparison,
   type CategorySlice,
   type TrendPoint,
   type NetWorthPoint,
+  type MonthCompare,
 } from '../lib/stats'
-import { currentMonthKey, monthLabel, monthLabelShort, parseMonthKey } from '../lib/dates'
-import { money, moneyShort } from '../lib/money'
-import { Card, SectionTitle, EmptyState } from '../components/ui'
+import { currentMonthKey, monthLabel, monthLabelShort, parseMonthKey, addMonths } from '../lib/dates'
+import { money, moneyShort, moneySigned } from '../lib/money'
+import { downloadTransactionsCsv } from '../lib/backup'
+import { Card, SectionTitle, EmptyState, Button } from '../components/ui'
 
 export default function Insights() {
   const navigate = useNavigate()
@@ -33,12 +36,14 @@ export default function Insights() {
   const [trend, setTrend] = useState<TrendPoint[]>([])
   const [networth, setNetworth] = useState<NetWorthPoint[]>([])
   const [daily, setDaily] = useState<number[]>([])
+  const [cmp, setCmp] = useState<MonthCompare | null>(null)
 
   useEffect(() => {
     getCategoryBreakdown(mk).then(setSlices)
     getMonthlyTrend(6).then(setTrend)
     getNetWorthSeries(6).then(setNetworth)
     getMonthDailySpend(mk).then(setDaily)
+    getMonthComparison(mk).then(setCmp)
   }, [mk])
 
   const totalSpent = slices?.reduce((s, x) => s + x.value, 0) ?? 0
@@ -91,6 +96,52 @@ export default function Insights() {
         )}
       </Card>
 
+      <SectionTitle>vs {monthLabel(addMonths(mk, -1))}</SectionTitle>
+      <Card className="p-4">
+        {!cmp ? (
+          <p className="text-center text-ink-faint py-4">Loading…</p>
+        ) : cmp.thisTotal === 0 && cmp.lastTotal === 0 ? (
+          <p className="text-center text-ink-faint text-sm py-2">No spending to compare yet.</p>
+        ) : (
+          <>
+            <div className="flex items-end justify-between">
+              <div>
+                <p className="text-[11px] text-ink-faint">This month</p>
+                <p className="tnum text-xl font-bold">{money(cmp.thisTotal)}</p>
+              </div>
+              {(() => {
+                const d = cmp.thisTotal - cmp.lastTotal
+                return (
+                  <p className={`tnum text-sm font-semibold ${d > 0 ? 'text-neg' : 'text-pos'}`}>
+                    {d > 0 ? '▲' : '▼'} {moneySigned(d)} vs last
+                  </p>
+                )
+              })()}
+              <div className="text-right">
+                <p className="text-[11px] text-ink-faint">Last month</p>
+                <p className="tnum text-sm text-ink-soft">{money(cmp.lastTotal)}</p>
+              </div>
+            </div>
+            {cmp.movers.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-line space-y-1.5">
+                <p className="text-[11px] text-ink-faint">Biggest changes</p>
+                {cmp.movers.slice(0, 5).map((m) => (
+                  <div key={m.id} className="flex items-center justify-between text-sm">
+                    <span className="flex items-center gap-2 min-w-0">
+                      <span>{m.emoji}</span>
+                      <span className="truncate">{m.name}</span>
+                    </span>
+                    <span className={`tnum shrink-0 ${m.delta > 0 ? 'text-neg' : 'text-pos'}`}>
+                      {m.delta > 0 ? '▲' : '▼'} {moneySigned(m.delta)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </Card>
+
       <SectionTitle>Daily spending</SectionTitle>
       <Card className="p-4">
         <MonthHeatmap monthKey={mk} daily={daily} />
@@ -138,6 +189,11 @@ export default function Insights() {
           </LineChart>
         </ResponsiveContainer>
       </Card>
+
+      <SectionTitle>Export</SectionTitle>
+      <Button variant="soft" className="w-full" onClick={() => downloadTransactionsCsv()}>
+        ⬇️ Export transactions (CSV)
+      </Button>
     </div>
   )
 }

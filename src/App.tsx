@@ -19,6 +19,8 @@ import Onboarding from './components/Onboarding'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { PinLock } from './components/PinLock'
 import { isUnlocked } from './lib/pin'
+import { SyncConflict } from './components/SyncConflict'
+import { maybeNotifyDueBills } from './lib/notify'
 
 // Charts (recharts) are heavy — load only when the user opens Insights.
 const Insights = lazy(() => import('./routes/Insights'))
@@ -45,6 +47,10 @@ export default function App() {
   const location = useLocation()
   const [unlocked, setUnlocked] = useState(isUnlocked())
   configureMoney(settings.currency, settings.locale)
+
+  useEffect(() => {
+    if (ready && unlocked && settings.onboarded) maybeNotifyDueBills()
+  }, [ready, unlocked, settings.onboarded])
 
   const theme = settings.theme ?? 'system'
   useEffect(() => {
@@ -123,6 +129,7 @@ export default function App() {
         </ErrorBoundary>
       </main>
       <TabBar />
+      <SyncConflict />
     </div>
   )
 }

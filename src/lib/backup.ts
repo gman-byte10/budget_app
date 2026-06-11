@@ -43,6 +43,40 @@ export async function downloadBackup() {
   if (s) await db.settings.put({ ...s, lastBackupAt: todayStr() })
 }
 
+/** Export all transactions as a CSV for spreadsheets / taxes. */
+export async function downloadTransactionsCsv(): Promise<void> {
+  const [txns, accts, cats] = await Promise.all([
+    db.transactions.orderBy('date').toArray(),
+    db.accounts.toArray(),
+    db.categories.toArray(),
+  ])
+  const an = (id?: string) => accts.find((a) => a.id === id)?.name ?? ''
+  const cn = (id?: string) => cats.find((c) => c.id === id)?.name ?? ''
+  const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`
+  const rows: (string | number)[][] = [
+    ['Date', 'Type', 'Amount', 'Account', 'To account', 'Category', 'Note'],
+  ]
+  for (const t of txns) {
+    rows.push([
+      t.date,
+      t.type,
+      t.amount,
+      an(t.accountId),
+      t.type === 'transfer' ? an(t.toAccountId) : '',
+      t.type === 'transfer' ? '' : cn(t.categoryId),
+      t.note ?? '',
+    ])
+  }
+  const csv = rows.map((r) => r.map(esc).join(',')).join('\r\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `budget-transactions-${todayStr()}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 /** Replace all data with the contents of a backup file. */
 export async function importAll(json: string): Promise<void> {
   const parsed = JSON.parse(json) as Backup

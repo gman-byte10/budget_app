@@ -179,6 +179,8 @@ export interface Settings {
   streak: { current: number; longest: number; lastLogDate?: string }
   lastWeeklyCheckin?: string
   lastBackupAt?: string
+  /** Show a notification for due bills when the app is opened. */
+  notifyBills?: boolean
   closedMonths: string[]
   ai: AiSettings
   onboarded: boolean

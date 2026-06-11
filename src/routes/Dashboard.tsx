@@ -12,6 +12,7 @@ import { WeeklyCheckinCard } from '../components/WeeklyCheckin'
 import { CoachCard } from '../components/Coach'
 import { InstallHint } from '../components/InstallHint'
 import { BackupReminder } from '../components/BackupReminder'
+import { UpcomingBills } from '../components/UpcomingBills'
 import { daysSinceCheckin, getConsistencyDots } from '../lib/stats'
 
 export default function Dashboard() {
@@ -85,6 +86,7 @@ export default function Dashboard() {
 
       <InstallHint />
       <BackupReminder />
+      <UpcomingBills />
 
       {/* 7-day consistency strip — gentle habit reinforcement */}
       <Card className="p-3 mt-3">

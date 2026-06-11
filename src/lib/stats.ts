@@ -235,3 +235,30 @@ export function daysSinceCheckin(last?: string): number {
   const now = Date.UTC(ty, tm - 1, td)
   return Math.round((now - then) / 86400000)
 }
+
+export interface MonthCompare {
+  thisTotal: number
+  lastTotal: number
+  movers: { id: string; name: string; emoji?: string; thisV: number; lastV: number; delta: number }[]
+}
+
+/** This month vs last month: totals + the biggest category movers. */
+export async function getMonthComparison(mk: MonthKey): Promise<MonthCompare> {
+  const [cur, prev] = await Promise.all([getCategoryBreakdown(mk), getCategoryBreakdown(addMonths(mk, -1))])
+  const map = new Map<string, { name: string; emoji?: string; thisV: number; lastV: number }>()
+  for (const s of cur) map.set(s.id, { name: s.name, emoji: s.emoji, thisV: s.value, lastV: 0 })
+  for (const s of prev) {
+    const e = map.get(s.id)
+    if (e) e.lastV = s.value
+    else map.set(s.id, { name: s.name, emoji: s.emoji, thisV: 0, lastV: s.value })
+  }
+  const movers = Array.from(map.entries())
+    .map(([id, v]) => ({ id, ...v, delta: round2(v.thisV - v.lastV) }))
+    .filter((m) => m.delta !== 0)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+  return {
+    thisTotal: cur.reduce((s, x) => s + x.value, 0),
+    lastTotal: prev.reduce((s, x) => s + x.value, 0),
+    movers,
+  }
+}

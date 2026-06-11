@@ -6,6 +6,7 @@ import { useSettings, updateSettings } from '../state/useSettings'
 import { downloadBackup, importAll } from '../lib/backup'
 import { loadDemoData } from '../lib/demo'
 import { hasPin, setPin, clearPin } from '../lib/pin'
+import { notificationsSupported, requestNotificationPermission } from '../lib/notify'
 import {
   getSyncState,
   onSyncChange,
@@ -129,6 +130,34 @@ export default function Settings() {
         </div>
         <span className="text-ink-faint">›</span>
       </Card>
+
+      {notificationsSupported() && (
+        <>
+          <SectionTitle>Reminders</SectionTitle>
+          <Card className="p-4">
+            <button
+              onClick={async () => {
+                if (settings.notifyBills) {
+                  updateSettings({ notifyBills: false })
+                } else {
+                  const ok = await requestNotificationPermission()
+                  updateSettings({ notifyBills: ok })
+                  if (!ok) alert('Notifications are blocked. Enable them for this site in your browser settings.')
+                }
+              }}
+              className="w-full flex items-center justify-between"
+            >
+              <span className="text-left">
+                <span className="font-medium block">Notify me about due bills</span>
+                <span className="text-xs text-ink-faint">Shows a notification when you open the app and bills are due</span>
+              </span>
+              <span className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${settings.notifyBills ? 'bg-brand' : 'bg-line'}`}>
+                <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${settings.notifyBills ? 'left-[1.375rem]' : 'left-0.5'}`} />
+              </span>
+            </button>
+          </Card>
+        </>
+      )}
 
       <SectionTitle>AI assist</SectionTitle>
       <AiSettings />

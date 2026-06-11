@@ -18,12 +18,21 @@ export interface SyncState {
   syncing: boolean
   lastSyncedAt: number | null
   error: string | null
+  /** Set when this device AND the cloud both changed — user must choose. */
+  conflict: boolean
 }
 
-let state: SyncState = { configured: false, syncing: false, lastSyncedAt: null, error: null }
+let state: SyncState = {
+  configured: false,
+  syncing: false,
+  lastSyncedAt: null,
+  error: null,
+  conflict: false,
+}
 let listeners: Array<() => void> = []
 let dirty = false
 let suppress = false // true while applying a remote import (don't re-mark dirty)
+let conflictBlob: Blob | null = null // the remote copy involved in a pending conflict
 let pushTimer: ReturnType<typeof setTimeout> | null = null
 let inited = false
 
@@ -145,9 +154,10 @@ export async function pushLocal(): Promise<void> {
       dirty = false
       setLocalUpdatedAt(updatedAt)
     } else if (res.stale && res.server) {
-      // Another device wrote a newer copy first — adopt it.
-      const remoteJson = await decryptStr(pass, res.server.payload)
-      await applyRemote(remoteJson, res.server.updatedAt)
+      // Another device wrote a newer copy first AND we have local edits → conflict.
+      conflictBlob = res.server
+      state = { ...state, conflict: true }
+      emit()
     }
   } catch (e) {
     state = { ...state, error: String((e as Error).message || e) }
@@ -165,6 +175,13 @@ export async function syncPull(): Promise<void> {
   try {
     const rec = await remoteGet(pass)
     if (rec && rec.updatedAt > localUpdatedAt()) {
+      if (dirty) {
+        // We have unsynced local edits and the cloud is newer — don't clobber.
+        conflictBlob = rec
+        state = { ...state, conflict: true }
+        emit()
+        return
+      }
       const json = await decryptStr(pass, rec.payload)
       await applyRemote(json, rec.updatedAt)
     }
@@ -227,6 +244,45 @@ export function disableSync(): void {
   localStorage.removeItem(AT_KEY)
   state = { ...state, configured: false, lastSyncedAt: null, error: null }
   emit()
+}
+
+/**
+ * Resolve a sync conflict. 'local' keeps THIS device (overwrites cloud);
+ * 'remote' adopts the other device's copy (replaces this device).
+ */
+export async function resolveConflict(keep: 'local' | 'remote'): Promise<void> {
+  const pass = getPass()
+  if (!pass) {
+    conflictBlob = null
+    state = { ...state, conflict: false }
+    emit()
+    return
+  }
+  state = { ...state, syncing: true, error: null }
+  emit()
+  try {
+    if (keep === 'remote' && conflictBlob) {
+      const json = await decryptStr(pass, conflictBlob.payload)
+      await applyRemote(json, conflictBlob.updatedAt)
+    } else if (keep === 'local') {
+      const base = conflictBlob ? conflictBlob.updatedAt : 0
+      const json = JSON.stringify(await exportAll())
+      const payload = await encryptStr(pass, json)
+      const updatedAt = Math.max(Date.now(), base + 1) // win over the server copy
+      const res = await remotePut(pass, payload, updatedAt)
+      if (res.ok) {
+        dirty = false
+        setLocalUpdatedAt(updatedAt)
+      }
+    }
+    conflictBlob = null
+    state = { ...state, conflict: false }
+  } catch (e) {
+    state = { ...state, error: String((e as Error).message || e) }
+  } finally {
+    state = { ...state, syncing: false }
+    emit()
+  }
 }
 
 /** Manual "Sync now" — push local changes, then pull anything newer. */
