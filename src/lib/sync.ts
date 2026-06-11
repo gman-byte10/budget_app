@@ -49,6 +49,23 @@ export function getSyncState(): SyncState {
   return state
 }
 
+export type PullDecision = 'noop' | 'adopt' | 'conflict'
+
+/**
+ * Pure decision for what a pull should do — the core data-safety rule:
+ * only auto-adopt the cloud copy when this device has NO unsynced edits.
+ * If we have local edits AND the cloud is newer, it's a conflict (ask the user)
+ * — never silently overwrite. Kept pure so it's exhaustively unit-tested.
+ */
+export function decidePull(
+  remoteUpdatedAt: number | null,
+  localUpdatedAt: number,
+  dirty: boolean,
+): PullDecision {
+  if (remoteUpdatedAt == null || remoteUpdatedAt <= localUpdatedAt) return 'noop'
+  return dirty ? 'conflict' : 'adopt'
+}
+
 export function syncConfigured(): boolean {
   return !!localStorage.getItem(PASS_KEY)
 }
@@ -174,14 +191,15 @@ export async function syncPull(): Promise<void> {
   emit()
   try {
     const rec = await remoteGet(pass)
-    if (rec && rec.updatedAt > localUpdatedAt()) {
-      if (dirty) {
-        // We have unsynced local edits and the cloud is newer — don't clobber.
-        conflictBlob = rec
-        state = { ...state, conflict: true }
-        emit()
-        return
-      }
+    const decision = decidePull(rec?.updatedAt ?? null, localUpdatedAt(), dirty)
+    if (decision === 'conflict' && rec) {
+      // We have unsynced local edits and the cloud is newer — don't clobber.
+      conflictBlob = rec
+      state = { ...state, conflict: true }
+      emit()
+      return
+    }
+    if (decision === 'adopt' && rec) {
       const json = await decryptStr(pass, rec.payload)
       await applyRemote(json, rec.updatedAt)
     }
