@@ -11,17 +11,21 @@ export interface CategoryBudgetRow extends CatMonthResult {
 export interface MonthBudget {
   monthKey: MonthKey
   rows: CategoryBudgetRow[]
-  /** Active envelopes only (base > 0 or has carry-in). */
+  /** Active envelopes only (base > 0 or has carry-in) — ALL sections. */
   totalEffective: number
   totalSpent: number
-  /** Headline "safe to spend": money still available across all envelopes. */
+  /** Headline "safe to spend": flexible money left, EXCLUDING committed sections. */
   safeToSpend: number
+  /** Effective budgeted in committed sections (bills/savings/card payments). */
+  committedEffective: number
+  committedSpent: number
   totalBase: number
   totalCarryIn: number
 }
 
 interface Gathered {
   categories: Category[]
+  committedGroupIds: Set<string>
   spentByCatMonth: Map<string, number> // `${catId}:${mk}`
   /** Money transferred INTO an account per month: `${accountId}:${mk}` -> sum. */
   paidToAccountMonth: Map<string, number>
@@ -32,8 +36,9 @@ interface Gathered {
 }
 
 async function gather(): Promise<Gathered> {
-  const [categories, expenses, transfers, overrides, snaps] = await Promise.all([
+  const [categories, groups, expenses, transfers, overrides, snaps] = await Promise.all([
     db.categories.toArray(),
+    db.groups.toArray(),
     db.transactions.where('type').equals('expense').toArray() as Promise<Transaction[]>,
     db.transactions.where('type').equals('transfer').toArray() as Promise<Transaction[]>,
     db.budgets.toArray() as Promise<BudgetOverride[]>,
@@ -63,6 +68,8 @@ async function gather(): Promise<Gathered> {
     if (!first || mk < first) firstPaymentByAccount.set(t.toAccountId, mk)
   }
 
+  const committedGroupIds = new Set(groups.filter((g) => g.committed).map((g) => g.id))
+
   const overrideMap = new Map<string, number>()
   for (const o of overrides) overrideMap.set(`${o.categoryId}:${o.monthKey}`, o.base)
 
@@ -75,6 +82,7 @@ async function gather(): Promise<Gathered> {
 
   return {
     categories,
+    committedGroupIds,
     spentByCatMonth,
     paidToAccountMonth,
     firstPaymentByAccount,
@@ -132,14 +140,20 @@ export async function computeMonthBudget(monthKey: MonthKey): Promise<MonthBudge
   let totalBase = 0
   let totalCarryIn = 0
   let safeToSpend = 0
+  let committedEffective = 0
+  let committedSpent = 0
   for (const r of rows) {
     const active = r.base > 0 || r.carryIn !== 0
+    const committed = !!r.category.groupId && g.committedGroupIds.has(r.category.groupId)
     totalSpent += r.spent
+    if (committed) committedSpent += r.spent
     if (active) {
       totalEffective += r.effective
       totalBase += r.base
       totalCarryIn += r.carryIn
-      safeToSpend += r.effective - r.spent
+      if (committed) committedEffective += r.effective
+      // Safe-to-spend only counts FLEXIBLE money (not bills/savings/card payments).
+      else safeToSpend += r.effective - r.spent
     }
   }
 
@@ -151,5 +165,7 @@ export async function computeMonthBudget(monthKey: MonthKey): Promise<MonthBudge
     totalBase: round2(totalBase),
     totalCarryIn: round2(totalCarryIn),
     safeToSpend: round2(safeToSpend),
+    committedEffective: round2(committedEffective),
+    committedSpent: round2(committedSpent),
   }
 }

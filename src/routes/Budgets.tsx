@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, uid } from '../db/db'
-import type { Category } from '../db/schema'
+import { CC_GROUP } from '../db/defaults'
+import type { Category, Group } from '../db/schema'
 import { useMonthBudget, useActiveAccounts, useBalances } from '../state/useData'
 import { addTransaction } from '../state/actions'
 import { useSettings } from '../state/useSettings'
@@ -22,8 +23,11 @@ export default function Budgets() {
   const accounts = useActiveAccounts()
   const [mk, setMk] = useState(currentMonthKey())
   const budget = useMonthBudget(mk)
+  const groups = useLiveQuery(() => db.groups.filter((g) => !g.archived).sortBy('order'), [], [])
   const [editing, setEditing] = useState<Category | 'new' | null>(null)
+  const [editingGroup, setEditingGroup] = useState<Group | 'new' | null>(null)
   const [newFundCard, setNewFundCard] = useState<{ id: string; name: string } | undefined>()
+  const [newCatGroupId, setNewCatGroupId] = useState<string | undefined>()
   const [acting, setActing] = useState<CategoryBudgetRow | null>(null)
   const [reordering, setReordering] = useState(false)
   const [dismissedNudge, setDismissedNudge] = useState(
@@ -56,9 +60,114 @@ export default function Budgets() {
   }
   const isActive = (r: CategoryBudgetRow) => !!r.category.linkedAccountId || r.base > 0 || r.carryIn !== 0
   const byOrder = (a: CategoryBudgetRow, b: CategoryBudgetRow) => a.category.order - b.category.order
-  const active = (budget?.rows.filter(isActive) ?? []).slice().sort(byOrder)
-  const untracked = (budget?.rows.filter((r) => !isActive(r)) ?? []).slice().sort(byOrder)
-  const activeCats = active.map((r) => r.category)
+  const allRows = (budget?.rows ?? []).slice().sort(byOrder)
+
+  // Bucket rows into their budget sections.
+  const UNGROUPED = '__ungrouped__'
+  const rowsByGroup = new Map<string, CategoryBudgetRow[]>()
+  for (const r of allRows) {
+    let gid = r.category.groupId
+    if (!gid || !groups.some((g) => g.id === gid)) gid = UNGROUPED
+    const arr = rowsByGroup.get(gid) ?? []
+    arr.push(r)
+    rowsByGroup.set(gid, arr)
+  }
+
+  const renderSection = (group: Group | null) => {
+    const gid = group ? group.id : UNGROUPED
+    const rows = rowsByGroup.get(gid) ?? []
+    if (!group && rows.length === 0) return null
+    const act = rows.filter(isActive)
+    const untr = rows.filter((r) => !isActive(r))
+    const actCats = act.map((r) => r.category)
+    const subSpent = act.reduce((s, r) => s + r.spent, 0)
+    const subEff = act.reduce((s, r) => s + r.effective, 0)
+    const left = round2(subEff - subSpent)
+    return (
+      <div key={gid} className="mt-4">
+        <div className="flex items-center justify-between px-1 mb-1.5">
+          <button
+            onClick={group && !reordering ? () => setEditingGroup(group) : undefined}
+            className="flex items-center gap-2 min-w-0"
+          >
+            <span>{group?.emoji ?? '📂'}</span>
+            <span className="font-semibold truncate">{group?.name ?? 'Ungrouped'}</span>
+            {group?.committed && (
+              <span className="text-[10px] text-ink-faint border border-line rounded-full px-1.5 py-0.5 shrink-0">committed</span>
+            )}
+            {group && !reordering && <span className="text-ink-faint text-xs">✎</span>}
+          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {reordering && group ? (
+              <>
+                <button onClick={() => reorderWithin('groups', groups, group.id, -1)} className="h-8 w-8 rounded-lg border border-line text-ink-soft active:bg-canvas" aria-label="Section up">↑</button>
+                <button onClick={() => reorderWithin('groups', groups, group.id, 1)} className="h-8 w-8 rounded-lg border border-line text-ink-soft active:bg-canvas" aria-label="Section down">↓</button>
+              </>
+            ) : (
+              <>
+                {subEff > 0 && (
+                  <span className={`tnum text-xs ${left < 0 ? 'text-neg' : 'text-ink-faint'}`}>{money(left)} left</span>
+                )}
+                {group && !closed && (
+                  <button
+                    onClick={() => {
+                      setNewCatGroupId(group.id)
+                      setEditing('new')
+                    }}
+                    className="text-brand text-base font-bold w-7 leading-none"
+                    aria-label="Add category to section"
+                  >
+                    +
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        {rows.length === 0 ? (
+          <Card className="p-3">
+            <p className="text-xs text-ink-faint text-center">No categories yet — tap + to add one.</p>
+          </Card>
+        ) : (
+          <div className="space-y-2">
+            {act.map((r) => (
+              <BudgetRow
+                key={r.category.id}
+                row={r}
+                cardBalance={r.category.linkedAccountId ? bal?.balances.get(r.category.linkedAccountId) : undefined}
+                reordering={reordering}
+                onUp={() => reorderWithin('categories', actCats, r.category.id, -1)}
+                onDown={() => reorderWithin('categories', actCats, r.category.id, 1)}
+                onClick={() => (r.frozen ? setEditing(r.category) : setActing(r))}
+              />
+            ))}
+            {untr.length > 0 && (
+              <Card className="p-2">
+                <div className="divide-y divide-line">
+                  {untr.map((r) => (
+                    <button
+                      key={r.category.id}
+                      onClick={() => setEditing(r.category)}
+                      className="w-full flex items-center justify-between py-2.5 px-1 active:bg-canvas rounded-lg"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span>{r.category.emoji}</span>
+                        <span className="font-medium">{r.category.name}</span>
+                      </span>
+                      <span className="text-sm text-ink-faint">
+                        {r.spent > 0 ? `${money(r.spent)} spent · set budget ›` : 'Set budget ›'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </Card>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="pt-2">
@@ -85,14 +194,20 @@ export default function Budgets() {
         <p className={`tnum text-4xl font-bold mt-1 ${(budget?.safeToSpend ?? 0) < 0 ? 'text-neg' : 'text-ink'}`}>
           {money(budget?.safeToSpend ?? 0)}
         </p>
-        <div className="flex justify-center gap-4 mt-3 text-xs text-ink-soft">
-          <span>Base {money(budget?.totalBase ?? 0)}</span>
-          {(budget?.totalCarryIn ?? 0) !== 0 && (
-            <span className={(budget?.totalCarryIn ?? 0) >= 0 ? 'text-pos' : 'text-neg'}>
-              Rolled {moneySigned(budget?.totalCarryIn ?? 0)}
-            </span>
-          )}
-          <span>Spent {money(budget?.totalSpent ?? 0)}</span>
+        <p className="text-[11px] text-ink-faint mt-0.5">flexible money left (bills, savings & card payments set aside)</p>
+        <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-line text-center">
+          <div>
+            <p className="tnum text-sm font-semibold">{money(budget?.totalEffective ?? 0)}</p>
+            <p className="text-[10px] text-ink-faint">Total budgeted</p>
+          </div>
+          <div>
+            <p className="tnum text-sm font-semibold">{money(budget?.committedEffective ?? 0)}</p>
+            <p className="text-[10px] text-ink-faint">Committed</p>
+          </div>
+          <div>
+            <p className="tnum text-sm font-semibold">{money(budget?.totalSpent ?? 0)}</p>
+            <p className="text-[10px] text-ink-faint">Spent</p>
+          </div>
         </div>
       </Card>
 
@@ -140,60 +255,27 @@ export default function Budgets() {
       <SectionTitle
         action={
           <div className="flex gap-3">
-            {active.length > 1 && !closed && (
+            {!closed && allRows.length > 0 && (
               <button onClick={() => setReordering((v) => !v)} className="text-brand text-sm font-semibold">
                 {reordering ? 'Done' : 'Reorder'}
               </button>
             )}
+            {!closed && <button onClick={() => setEditingGroup('new')} className="text-brand text-sm font-semibold">+ Section</button>}
             <button onClick={() => setEditing('new')} className="text-brand text-sm font-semibold">
               + Category
             </button>
           </div>
         }
       >
-        Categories
+        Sections
       </SectionTitle>
 
-      {active.length === 0 && untracked.length === 0 ? (
+      {allRows.length === 0 && groups.length === 0 ? (
         <EmptyState emoji="🎯" title="No budgets yet" hint="Add a category and set a monthly amount to start tracking." />
       ) : (
-        <div className="space-y-2">
-          {active.map((r) => (
-            <BudgetRow
-              key={r.category.id}
-              row={r}
-              cardBalance={r.category.linkedAccountId ? bal?.balances.get(r.category.linkedAccountId) : undefined}
-              reordering={reordering}
-              onUp={() => reorderWithin('categories', activeCats, r.category.id, -1)}
-              onDown={() => reorderWithin('categories', activeCats, r.category.id, 1)}
-              onClick={() => (r.frozen ? setEditing(r.category) : setActing(r))}
-            />
-          ))}
-        </div>
-      )}
-
-      {untracked.length > 0 && (
         <>
-          <SectionTitle>Untracked</SectionTitle>
-          <Card className="p-2">
-            <div className="divide-y divide-line">
-              {untracked.map((r) => (
-                <button
-                  key={r.category.id}
-                  onClick={() => setEditing(r.category)}
-                  className="w-full flex items-center justify-between py-2.5 px-1 active:bg-canvas rounded-lg"
-                >
-                  <span className="flex items-center gap-2">
-                    <span>{r.category.emoji}</span>
-                    <span className="font-medium">{r.category.name}</span>
-                  </span>
-                  <span className="text-sm text-ink-faint">
-                    {r.spent > 0 ? `${money(r.spent)} spent · set budget ›` : 'Set budget ›'}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </Card>
+          {groups.map((g) => renderSection(g))}
+          {renderSection(null)}
         </>
       )}
 
@@ -203,11 +285,17 @@ export default function Budgets() {
           monthKey={mk}
           initialLinkedAccountId={editing === 'new' ? newFundCard?.id : undefined}
           initialLinkedAccountName={editing === 'new' ? newFundCard?.name : undefined}
+          initialGroupId={editing === 'new' ? newCatGroupId : undefined}
           onClose={() => {
             setEditing(null)
             setNewFundCard(undefined)
+            setNewCatGroupId(undefined)
           }}
         />
+      )}
+
+      {editingGroup && (
+        <GroupEditor group={editingGroup === 'new' ? null : editingGroup} onClose={() => setEditingGroup(null)} />
       )}
 
       {acting && (
@@ -407,6 +495,7 @@ function CategoryEditor({
   onClose,
   initialLinkedAccountId,
   initialLinkedAccountName,
+  initialGroupId,
 }: {
   category: Category | null
   monthKey: string
@@ -414,11 +503,14 @@ function CategoryEditor({
   /** Pre-link a new fund to this card (used by the "add payment plan" nudge). */
   initialLinkedAccountId?: string
   initialLinkedAccountName?: string
+  /** Pre-assign a new category to this section. */
+  initialGroupId?: string
 }) {
   const navigate = useNavigate()
   const toast = useToast()
   const accounts = useActiveAccounts()
   const creditAccounts = accounts.filter((a) => a.type === 'credit')
+  const groups = useLiveQuery(() => db.groups.filter((g) => !g.archived).sortBy('order'), [], [])
   const override = useLiveQuery(
     () => (category ? db.budgets.get(`${category.id}:${monthKey}`) : undefined),
     [category?.id, monthKey],
@@ -433,6 +525,7 @@ function CategoryEditor({
   const [overrideStr, setOverrideStr] = useState('')
   const [defaultAccountId, setDefaultAccountId] = useState(category?.defaultAccountId ?? '')
   const [linkedAccountId, setLinkedAccountId] = useState(category?.linkedAccountId ?? initialLinkedAccountId ?? '')
+  const [groupId, setGroupId] = useState(category?.groupId ?? initialGroupId ?? '')
   const isFund = !!linkedAccountId
 
   // initialize override field once loaded
@@ -451,6 +544,7 @@ function CategoryEditor({
       rolloverCap: cap,
       defaultAccountId: defaultAccountId || undefined,
       linkedAccountId: linkedAccountId || undefined,
+      groupId: groupId || undefined,
     }
     if (category) {
       await db.categories.update(category.id, fields)
@@ -516,6 +610,25 @@ function CategoryEditor({
         />
       </div>
 
+      {groups.length > 0 && (
+        <div className="mt-3">
+          <Field label="Section">
+            <select
+              value={groupId}
+              onChange={(e) => setGroupId(e.target.value)}
+              className="w-full rounded-xl border border-line bg-surface px-3 py-3 outline-none focus:border-brand"
+            >
+              <option value="">Ungrouped</option>
+              {groups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.emoji} {g.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+      )}
+
       {/* Credit-card payment fund link */}
       {creditAccounts.length > 0 && (
         <Field label="Credit-card payment fund (optional)">
@@ -529,6 +642,9 @@ function CategoryEditor({
                 // Auto-name from the card if the user hasn't typed a custom name yet.
                 if (acc && !name.trim()) setName(`${acc.name} payment`)
                 setEmoji('💳')
+                // Drop it in the Credit card payments section by default.
+                const cc = groups.find((g) => g.name === CC_GROUP)
+                if (cc) setGroupId(cc.id)
               }
             }}
             className="w-full rounded-xl border border-line bg-surface px-3 py-3 outline-none focus:border-brand"
@@ -644,6 +760,79 @@ function CategoryEditor({
             Archive category
           </Button>
         </>
+      )}
+    </Sheet>
+  )
+}
+
+function GroupEditor({ group, onClose }: { group: Group | null; onClose: () => void }) {
+  const [name, setName] = useState(group?.name ?? '')
+  const [emoji, setEmoji] = useState(group?.emoji ?? '📂')
+  const [committed, setCommitted] = useState(group?.committed ?? false)
+
+  async function save() {
+    if (!name.trim()) return
+    if (group) {
+      await db.groups.update(group.id, { name: name.trim(), emoji, committed })
+    } else {
+      const order = (await db.groups.count()) + 1
+      await db.groups.add({ id: uid(), name: name.trim(), emoji, committed, order, createdAt: Date.now() })
+    }
+    onClose()
+  }
+
+  async function remove() {
+    if (!group) return
+    if (!confirm(`Delete the "${group.name}" section? Its categories become ungrouped (not deleted).`)) return
+    await db.transaction('rw', db.categories, db.groups, async () => {
+      await db.categories
+        .where('groupId')
+        .equals(group.id)
+        .modify((c) => {
+          c.groupId = undefined
+        })
+      await db.groups.delete(group.id)
+    })
+    onClose()
+  }
+
+  return (
+    <Sheet title={group ? 'Edit section' : 'New section'} onClose={onClose}>
+      <div className="flex gap-2">
+        <input
+          value={emoji}
+          onChange={(e) => setEmoji(e.target.value.slice(0, 2))}
+          className="w-16 text-center text-2xl rounded-xl border border-line bg-surface py-3 outline-none focus:border-brand"
+        />
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Bills"
+          className="flex-1 rounded-xl border border-line bg-surface px-3 py-3 outline-none focus:border-brand"
+        />
+      </div>
+
+      <button
+        onClick={() => setCommitted((v) => !v)}
+        className="w-full flex items-center justify-between rounded-xl border border-line bg-surface px-3 py-3 mt-3"
+      >
+        <span className="text-left">
+          <span className="font-medium block">Committed money</span>
+          <span className="text-xs text-ink-faint">Excluded from “safe to spend” (e.g. bills, savings, card payments)</span>
+        </span>
+        <span className={`relative w-11 h-6 rounded-full transition-colors ${committed ? 'bg-brand' : 'bg-line'}`}>
+          <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${committed ? 'left-[1.375rem]' : 'left-0.5'}`} />
+        </span>
+      </button>
+
+      <Button onClick={save} className="w-full mt-4" disabled={!name.trim()}>
+        Save section
+      </Button>
+      {group && (
+        <Button variant="danger" onClick={remove} className="w-full mt-2">
+          Delete section
+        </Button>
       )}
     </Sheet>
   )

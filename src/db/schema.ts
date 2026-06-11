@@ -20,6 +20,18 @@ export interface Account {
   createdAt: number
 }
 
+/** A budget section that groups categories (e.g. Bills, Needs, Wants). */
+export interface Group {
+  id: ID
+  name: string
+  emoji?: string
+  /** Committed money (bills, savings, card payments) — excluded from safe-to-spend. */
+  committed?: boolean
+  order: number
+  archived?: boolean
+  createdAt: number
+}
+
 export type CategoryKind = 'expense' | 'income'
 
 export interface Category {
@@ -28,6 +40,8 @@ export interface Category {
   kind: CategoryKind
   emoji?: string
   color?: string
+  /** Budget section this category belongs to (see Group). */
+  groupId?: ID
   /** Recurring monthly base budget (expense categories). 0 = untracked. */
   monthlyBudget: number
   /** Envelope rollover on/off (expense only). */

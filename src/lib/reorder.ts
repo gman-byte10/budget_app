@@ -1,6 +1,6 @@
 import { db } from '../db/db'
 
-type Orderable = 'accounts' | 'categories'
+type Orderable = 'accounts' | 'categories' | 'groups'
 
 /** Swap an item with its neighbour in the given direction (-1 up, +1 down). */
 export async function reorder(kind: Orderable, id: string, dir: -1 | 1): Promise<void> {

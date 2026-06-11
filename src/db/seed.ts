@@ -1,5 +1,6 @@
 import { db, uid, DEFAULT_SETTINGS } from './db'
-import type { Account, Category, QuickAdd } from './schema'
+import type { Account, Category, Group, QuickAdd } from './schema'
+import { DEFAULT_GROUPS, CATEGORY_GROUP } from './defaults'
 
 // First-run defaults. Conservative budgets; the user adjusts in-app.
 // "Flexible" categories roll over (envelope); "fixed" bills don't.
@@ -39,12 +40,23 @@ export async function ensureSeeded(): Promise<void> {
     createdAt: now,
   }))
 
+  const groups: Group[] = DEFAULT_GROUPS.map((g, i) => ({
+    id: uid(),
+    name: g.name,
+    emoji: g.emoji,
+    committed: g.committed ?? false,
+    order: i,
+    createdAt: now,
+  }))
+  const groupByName = (n: string) => groups.find((g) => g.name === n)?.id
+
   const categories: Category[] = seedCategories.map((c, i) => ({
     ...c,
     id: uid(),
     order: i,
     usageCount: 0,
     createdAt: now,
+    groupId: c.kind === 'expense' ? groupByName(CATEGORY_GROUP[c.name]) : undefined,
   }))
 
   const byName = (n: string) => categories.find((c) => c.name === n)!.id
@@ -57,8 +69,9 @@ export async function ensureSeeded(): Promise<void> {
     { id: uid(), label: 'Gas', emoji: '⛽', categoryId: byName('Transport'), accountId: checkingId },
   ]
 
-  await db.transaction('rw', db.accounts, db.categories, db.settings, async () => {
+  await db.transaction('rw', db.accounts, db.categories, db.groups, db.settings, async () => {
     await db.accounts.bulkAdd(accounts)
+    await db.groups.bulkAdd(groups)
     await db.categories.bulkAdd(categories)
     await db.settings.add({ ...DEFAULT_SETTINGS, quickAdds })
   })

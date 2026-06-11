@@ -60,4 +60,21 @@ describe('demo data + rollover integration', () => {
     expect(await db.contributions.count()).toBeGreaterThan(0)
     expect(await db.recurring.count()).toBeGreaterThan(0)
   })
+
+  it('creates budget sections and assigns categories to them', async () => {
+    const groups = await db.groups.toArray()
+    expect(groups.length).toBe(5)
+    const bills = groups.find((g) => g.name === 'Bills')!
+    expect(bills.committed).toBe(true)
+    const rent = (await db.categories.toArray()).find((c) => c.name === 'Rent')!
+    expect(rent.groupId).toBe(bills.id)
+  })
+
+  it('excludes committed sections (bills/savings/cards) from safe-to-spend', async () => {
+    const b = await computeMonthBudget(currentMonthKey())
+    // Rent/Utilities/Subscriptions live in committed "Bills".
+    expect(b.committedEffective).toBeGreaterThan(0)
+    // safeToSpend (flexible) must be less than the all-in total budget.
+    expect(b.safeToSpend).toBeLessThan(b.totalEffective)
+  })
 })
