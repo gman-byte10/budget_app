@@ -5,6 +5,7 @@ import type { Goal } from '../db/schema'
 import { useActiveAccounts } from '../state/useData'
 import { money, parseAmount } from '../lib/money'
 import { todayStr, daysBetween } from '../lib/dates'
+import { contributeToGoal } from '../lib/goals'
 import { success } from '../lib/haptics'
 import { Card, Button, ProgressBar, EmptyState, SectionTitle, accountEmoji } from '../components/ui'
 import { Sheet, Field } from './Accounts'
@@ -132,27 +133,26 @@ function GoalEditor({ goal, onClose }: { goal: Goal | null; onClose: () => void 
   const [targetStr, setTargetStr] = useState(goal ? String(goal.target) : '')
   const [targetDate, setTargetDate] = useState(goal?.targetDate ?? '')
   const [accountId, setAccountId] = useState(goal?.accountId ?? '')
+  const [autoContribute, setAutoContribute] = useState(goal?.autoContribute ?? false)
+  const [autoAmountStr, setAutoAmountStr] = useState(goal?.autoAmount != null ? String(goal.autoAmount) : '')
+  const [autoFromAccountId, setAutoFromAccountId] = useState(goal?.autoFromAccountId ?? '')
 
   async function save() {
     if (!name.trim()) return
+    const fields = {
+      name: name.trim(),
+      emoji,
+      target: parseAmount(targetStr),
+      targetDate: targetDate || undefined,
+      accountId: accountId || undefined,
+      autoContribute,
+      autoAmount: autoContribute ? parseAmount(autoAmountStr) : undefined,
+      autoFromAccountId: autoContribute ? autoFromAccountId || undefined : undefined,
+    }
     if (goal) {
-      await db.goals.update(goal.id, {
-        name: name.trim(),
-        emoji,
-        target: parseAmount(targetStr),
-        targetDate: targetDate || undefined,
-        accountId: accountId || undefined,
-      })
+      await db.goals.update(goal.id, fields)
     } else {
-      await db.goals.add({
-        id: uid(),
-        name: name.trim(),
-        emoji,
-        target: parseAmount(targetStr),
-        targetDate: targetDate || undefined,
-        accountId: accountId || undefined,
-        createdAt: Date.now(),
-      })
+      await db.goals.add({ id: uid(), createdAt: Date.now(), ...fields })
     }
     onClose()
   }
@@ -211,7 +211,51 @@ function GoalEditor({ goal, onClose }: { goal: Goal | null; onClose: () => void 
           ))}
         </select>
       </Field>
-      <Button onClick={save} className="w-full mt-1" disabled={!name.trim()}>
+      <button
+        onClick={() => setAutoContribute((v) => !v)}
+        className="w-full flex items-center justify-between rounded-xl border border-line bg-surface px-3 py-3 mt-1"
+      >
+        <span className="text-left">
+          <span className="font-medium block">Auto-contribute monthly</span>
+          <span className="text-xs text-ink-faint">Logs a set amount each month automatically</span>
+        </span>
+        <span className={`relative w-11 h-6 rounded-full transition-colors ${autoContribute ? 'bg-brand' : 'bg-line'}`}>
+          <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${autoContribute ? 'left-[1.375rem]' : 'left-0.5'}`} />
+        </span>
+      </button>
+      {autoContribute && (
+        <>
+          <Field label="Monthly amount">
+            <input
+              inputMode="decimal"
+              value={autoAmountStr}
+              onChange={(e) => setAutoAmountStr(e.target.value)}
+              placeholder="0.00"
+              className="w-full rounded-xl border border-line bg-surface px-3 py-3 tnum outline-none focus:border-brand"
+            />
+          </Field>
+          {accountId && (
+            <Field label="Move from (optional)">
+              <select
+                value={autoFromAccountId}
+                onChange={(e) => setAutoFromAccountId(e.target.value)}
+                className="w-full rounded-xl border border-line bg-surface px-3 py-3 outline-none focus:border-brand"
+              >
+                <option value="">Just earmark (no transfer)</option>
+                {accounts
+                  .filter((a) => a.id !== accountId)
+                  .map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {accountEmoji(a.type)} {a.name}
+                    </option>
+                  ))}
+              </select>
+            </Field>
+          )}
+        </>
+      )}
+
+      <Button onClick={save} className="w-full mt-3" disabled={!name.trim()}>
         Save goal
       </Button>
       {goal && (
@@ -224,20 +268,15 @@ function GoalEditor({ goal, onClose }: { goal: Goal | null; onClose: () => void 
 }
 
 function ContributeSheet({ goal, saved, onClose }: { goal: Goal; saved: number; onClose: () => void }) {
+  const accounts = useActiveAccounts()
   const [amountStr, setAmountStr] = useState('')
+  const [fromAccountId, setFromAccountId] = useState('')
   const [celebrate, setCelebrate] = useState(false)
 
   async function add() {
     const amount = parseAmount(amountStr)
     if (amount <= 0) return
-    await db.contributions.add({
-      id: uid(),
-      goalId: goal.id,
-      amount,
-      date: todayStr(),
-      source: 'manual',
-      createdAt: Date.now(),
-    })
+    await contributeToGoal({ goal, amount, fromAccountId: fromAccountId || undefined })
     const newTotal = saved + amount
     if (newTotal >= goal.target && !goal.completedAt) {
       await db.goals.update(goal.id, { completedAt: Date.now() })
@@ -273,10 +312,33 @@ function ContributeSheet({ goal, saved, onClose }: { goal: Goal; saved: number; 
           className="w-full rounded-xl border border-line bg-surface px-3 py-3 tnum text-xl outline-none focus:border-brand"
         />
       </Field>
-      <p className="text-xs text-ink-faint mb-3">
-        Earmarks money toward this goal (a virtual envelope over your savings). Move the actual cash with a
-        transfer if you like.
-      </p>
+      {goal.accountId ? (
+        <Field label="Move money from">
+          <select
+            value={fromAccountId}
+            onChange={(e) => setFromAccountId(e.target.value)}
+            className="w-full rounded-xl border border-line bg-surface px-3 py-3 outline-none focus:border-brand"
+          >
+            <option value="">Just earmark (no transfer)</option>
+            {accounts
+              .filter((a) => a.id !== goal.accountId)
+              .map((a) => (
+                <option key={a.id} value={a.id}>
+                  {accountEmoji(a.type)} {a.name}
+                </option>
+              ))}
+          </select>
+          <p className="text-[11px] text-ink-faint mt-1">
+            {fromAccountId
+              ? 'Records a real transfer into the goal’s savings account.'
+              : 'Earmarks money toward the goal without moving cash.'}
+          </p>
+        </Field>
+      ) : (
+        <p className="text-xs text-ink-faint mb-3">
+          Earmarks money toward this goal. Tie the goal to a savings account (edit it) to move real money.
+        </p>
+      )}
       <Button onClick={add} className="w-full">
         Add {parseAmount(amountStr) > 0 ? money(parseAmount(amountStr)) : ''}
       </Button>

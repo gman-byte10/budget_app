@@ -2,6 +2,7 @@ import { useEffect, useState, lazy, Suspense } from 'react'
 import { Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { ensureSeeded } from './db/seed'
 import { processDueRecurring } from './lib/recurring'
+import { processDueGoals } from './lib/goals'
 import { initSync, syncConfigured, syncPull } from './lib/sync'
 import { useSettings } from './state/useSettings'
 import { configureMoney } from './lib/money'
@@ -35,6 +36,7 @@ function useBootstrap() {
         return syncConfigured() ? syncPull() : undefined // adopt newer cloud data first
       })
       .then(() => processDueRecurring())
+      .then(() => processDueGoals())
       .then(() => setReady(true))
       .catch((e) => setError(String((e as Error)?.message || e)))
   }, [])

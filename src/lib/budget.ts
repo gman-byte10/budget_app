@@ -30,17 +30,21 @@ interface Gathered {
   /** Money transferred INTO an account per month: `${accountId}:${mk}` -> sum. */
   paidToAccountMonth: Map<string, number>
   firstPaymentByAccount: Map<string, MonthKey>
+  /** Goal contributions per month: `${goalId}:${mk}` -> sum. */
+  contribByGoalMonth: Map<string, number>
+  firstContribByGoal: Map<string, MonthKey>
   overrides: Map<string, number> // `${catId}:${mk}` -> base
   snapshots: Map<string, MonthlySnapshot> // `${catId}:${mk}`
   firstMonthByCat: Map<string, MonthKey>
 }
 
 async function gather(): Promise<Gathered> {
-  const [categories, groups, expenses, transfers, overrides, snaps] = await Promise.all([
+  const [categories, groups, expenses, transfers, contributions, overrides, snaps] = await Promise.all([
     db.categories.toArray(),
     db.groups.toArray(),
     db.transactions.where('type').equals('expense').toArray() as Promise<Transaction[]>,
     db.transactions.where('type').equals('transfer').toArray() as Promise<Transaction[]>,
+    db.contributions.toArray(),
     db.budgets.toArray() as Promise<BudgetOverride[]>,
     db.snapshots.toArray() as Promise<MonthlySnapshot[]>,
   ])
@@ -68,6 +72,17 @@ async function gather(): Promise<Gathered> {
     if (!first || mk < first) firstPaymentByAccount.set(t.toAccountId, mk)
   }
 
+  // Goal contributions per month (used by goal-linked savings categories).
+  const contribByGoalMonth = new Map<string, number>()
+  const firstContribByGoal = new Map<string, MonthKey>()
+  for (const c of contributions) {
+    const mk = monthKeyOf(c.date)
+    const key = `${c.goalId}:${mk}`
+    contribByGoalMonth.set(key, round2((contribByGoalMonth.get(key) ?? 0) + c.amount))
+    const first = firstContribByGoal.get(c.goalId)
+    if (!first || mk < first) firstContribByGoal.set(c.goalId, mk)
+  }
+
   const committedGroupIds = new Set(groups.filter((g) => g.committed).map((g) => g.id))
 
   const overrideMap = new Map<string, number>()
@@ -86,6 +101,8 @@ async function gather(): Promise<Gathered> {
     spentByCatMonth,
     paidToAccountMonth,
     firstPaymentByAccount,
+    contribByGoalMonth,
+    firstContribByGoal,
     overrides: overrideMap,
     snapshots: snapMap,
     firstMonthByCat,
@@ -103,16 +120,24 @@ export async function computeMonthBudget(monthKey: MonthKey): Promise<MonthBudge
 
   for (const cat of g.categories) {
     if (cat.kind !== 'expense' || cat.archived) continue
-    // A credit-card payment fund is a bill: base = the amount you PLAN to pay
-    // (its budget), and "spending" = payments (transfers) you make TO that card.
-    const linked = cat.linkedAccountId
-    const spentFor = linked
-      ? (mk: MonthKey) => g.paidToAccountMonth.get(`${linked}:${mk}`) ?? 0
-      : (mk: MonthKey) => g.spentByCatMonth.get(`${cat.id}:${mk}`) ?? 0
-    const anchor =
-      (linked
-        ? g.firstPaymentByAccount.get(linked) ?? g.firstMonthByCat.get(cat.id)
-        : g.firstMonthByCat.get(cat.id)) ?? monthKey
+    // Spending source for the envelope:
+    //  • card payment fund  → transfers made TO that card
+    //  • goal savings line  → contributions made to that goal
+    //  • normal category    → expenses in that category
+    const card = cat.linkedAccountId
+    const goal = cat.linkedGoalId
+    let spentFor: (mk: MonthKey) => number
+    let anchor: MonthKey
+    if (card) {
+      spentFor = (mk) => g.paidToAccountMonth.get(`${card}:${mk}`) ?? 0
+      anchor = g.firstPaymentByAccount.get(card) ?? g.firstMonthByCat.get(cat.id) ?? monthKey
+    } else if (goal) {
+      spentFor = (mk) => g.contribByGoalMonth.get(`${goal}:${mk}`) ?? 0
+      anchor = g.firstContribByGoal.get(goal) ?? g.firstMonthByCat.get(cat.id) ?? monthKey
+    } else {
+      spentFor = (mk) => g.spentByCatMonth.get(`${cat.id}:${mk}`) ?? 0
+      anchor = g.firstMonthByCat.get(cat.id) ?? monthKey
+    }
     const result = computeCategoryMonth(
       {
         rollover: cat.rollover,

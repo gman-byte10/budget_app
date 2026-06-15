@@ -277,6 +277,8 @@ export default function Budgets() {
         </>
       )}
 
+      <GoalsStrip />
+
       {editing && (
         <CategoryEditor
           category={editing === 'new' ? null : editing}
@@ -575,8 +577,11 @@ function CategoryEditor({
   const [overrideStr, setOverrideStr] = useState('')
   const [defaultAccountId, setDefaultAccountId] = useState(category?.defaultAccountId ?? '')
   const [linkedAccountId, setLinkedAccountId] = useState(category?.linkedAccountId ?? initialLinkedAccountId ?? '')
+  const [linkedGoalId, setLinkedGoalId] = useState(category?.linkedGoalId ?? '')
   const [groupId, setGroupId] = useState(category?.groupId ?? initialGroupId ?? '')
+  const activeGoals = useLiveQuery(() => db.goals.filter((g) => !g.completedAt).toArray(), [], [])
   const isFund = !!linkedAccountId
+  const isGoalLine = !!linkedGoalId
 
   // initialize override field once loaded
   const overrideVal = override?.base
@@ -594,6 +599,7 @@ function CategoryEditor({
       rolloverCap: cap,
       defaultAccountId: defaultAccountId || undefined,
       linkedAccountId: linkedAccountId || undefined,
+      linkedGoalId: linkedGoalId || undefined,
       groupId: groupId || undefined,
     }
     if (category) {
@@ -679,8 +685,32 @@ function CategoryEditor({
         </div>
       )}
 
+      {/* Savings goal link — this category tracks contributions to a goal */}
+      {!isFund && activeGoals.length > 0 && (
+        <Field label="Track a savings goal (optional)">
+          <select
+            value={linkedGoalId}
+            onChange={(e) => setLinkedGoalId(e.target.value)}
+            className="w-full rounded-xl border border-line bg-surface px-3 py-3 outline-none focus:border-brand"
+          >
+            <option value="">No — normal spending category</option>
+            {activeGoals.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.emoji ?? '⭐'} {g.name}
+              </option>
+            ))}
+          </select>
+          {isGoalLine && (
+            <p className="text-[11px] text-ink-faint mt-1">
+              Budget how much you plan to save toward this goal each month. Contributions to the goal count as
+              this line's progress.
+            </p>
+          )}
+        </Field>
+      )}
+
       {/* Credit-card payment fund link */}
-      {creditAccounts.length > 0 && (
+      {!isGoalLine && creditAccounts.length > 0 && (
         <Field label="Credit-card payment fund (optional)">
           <select
             value={linkedAccountId}
@@ -885,6 +915,48 @@ function GroupEditor({ group, onClose }: { group: Group | null; onClose: () => v
         </Button>
       )}
     </Sheet>
+  )
+}
+
+function GoalsStrip() {
+  const navigate = useNavigate()
+  const goals = useLiveQuery(() => db.goals.filter((g) => !g.completedAt).toArray(), [], [])
+  const contributions = useLiveQuery(() => db.contributions.toArray(), [], [])
+  if (goals.length === 0) return null
+  const saved = new Map<string, number>()
+  for (const c of contributions) saved.set(c.goalId, (saved.get(c.goalId) ?? 0) + c.amount)
+  return (
+    <>
+      <SectionTitle
+        action={
+          <button onClick={() => navigate('/goals')} className="text-brand text-sm font-semibold">
+            All ›
+          </button>
+        }
+      >
+        Goals
+      </SectionTitle>
+      <div className="space-y-2">
+        {goals.map((g) => {
+          const s = saved.get(g.id) ?? 0
+          return (
+            <Card key={g.id} className="p-3" onClick={() => navigate('/goals')}>
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium truncate">
+                  {g.emoji ?? '⭐'} {g.name}
+                </span>
+                <span className="tnum text-ink-faint shrink-0">
+                  {money(s)} / {money(g.target)}
+                </span>
+              </div>
+              <div className="mt-2">
+                <ProgressBar value={s} max={g.target} tone="pos" />
+              </div>
+            </Card>
+          )
+        })}
+      </div>
+    </>
   )
 }
 

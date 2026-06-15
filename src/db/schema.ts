@@ -56,6 +56,11 @@ export interface Category {
    * envelope balance is what you've set aside for the card's next payment.
    */
   linkedAccountId?: ID
+  /**
+   * If set, this category tracks a savings GOAL: its "spending" is the
+   * contributions made to that goal in the month (a Savings budget line).
+   */
+  linkedGoalId?: ID
   archived?: boolean
   order: number
   /** Surfacing: recently-used categories float to the top of the picker. */
@@ -114,6 +119,12 @@ export interface Goal {
   accountId?: ID
   emoji?: string
   color?: string
+  /** Auto-log a monthly contribution (like a recurring transfer). */
+  autoContribute?: boolean
+  autoAmount?: number
+  autoFromAccountId?: ID
+  /** Last month auto-contribution ran ('YYYY-MM'), to fire once per month. */
+  lastAutoMonth?: string
   createdAt: number
   completedAt?: number
 }
@@ -123,7 +134,9 @@ export interface Contribution {
   goalId: ID
   amount: number
   date: string
-  source: 'manual' | 'rollover'
+  source: 'manual' | 'rollover' | 'auto'
+  /** The transfer transaction this contribution created, if it moved real money. */
+  txnId?: ID
   note?: string
   createdAt: number
 }
