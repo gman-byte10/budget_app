@@ -23,6 +23,15 @@ export default defineConfig({
           { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
           { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'maskable' },
         ],
+        // Long-press the installed app icon → jump straight to logging.
+        shortcuts: [
+          {
+            name: 'Add transaction',
+            short_name: 'Add',
+            url: '/add',
+            icons: [{ src: 'icon.svg', sizes: 'any', type: 'image/svg+xml' }],
+          },
+        ],
       },
     }),
   ],

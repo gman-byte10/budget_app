@@ -41,6 +41,20 @@ export async function deleteTransaction(id: string): Promise<void> {
   await db.transactions.delete(id)
 }
 
+/** Reconciliation: log a one-off adjustment so tracked balance matches reality. */
+export async function adjustAccountBalance(accountId: string, diff: number): Promise<void> {
+  if (diff === 0) return
+  await db.transactions.add({
+    id: uid(),
+    type: diff > 0 ? 'income' : 'expense',
+    amount: Math.abs(diff),
+    date: todayStr(),
+    accountId,
+    note: 'Balance adjustment',
+    createdAt: Date.now(),
+  })
+}
+
 /** Advance the daily logging streak. Idempotent within the same day. */
 export async function bumpStreak(): Promise<void> {
   const cur = (await db.settings.get('app')) ?? DEFAULT_SETTINGS
