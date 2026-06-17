@@ -357,18 +357,23 @@ function RowActionSheet({
     const left = round2(row.effective - row.spent)
     return (isFund || isGoal) && left > 0 ? String(left) : ''
   })
-  const [accountId, setAccountId] = useState(
-    row.category.defaultAccountId || accounts.find((a) => a.type !== 'credit')?.id || accounts[0]?.id || '',
-  )
+  // null = "not chosen yet"; we fall back to a sensible default that stays valid
+  // even though `accounts` loads asynchronously (avoids a stuck-empty select).
+  const [accountId, setAccountId] = useState<string | null>(null)
   // For goal contributions: '' = just earmark (no transfer).
   const [fromAccountId, setFromAccountId] = useState('')
   const remaining = round2(row.effective - row.spent)
 
+  // The account to use if the user hasn't explicitly picked one.
+  const defaultFrom =
+    row.category.defaultAccountId || accounts.find((a) => a.type !== 'credit')?.id || accounts[0]?.id || ''
+  const effAccountId = accountId ?? defaultFrom
+
   async function logExpense() {
     const amount = parseAmount(amountStr)
-    if (amount <= 0 || !accountId) return
+    if (amount <= 0 || !effAccountId) return
     try {
-      await addTransaction({ type: 'expense', amount, date: todayStr(), accountId, categoryId: row.category.id })
+      await addTransaction({ type: 'expense', amount, date: todayStr(), accountId: effAccountId, categoryId: row.category.id })
       toast(`Logged ${money(amount)} to ${row.category.name}`)
       onClose()
     } catch (e) {
@@ -377,13 +382,13 @@ function RowActionSheet({
   }
   async function payCard() {
     const amount = parseAmount(amountStr)
-    if (amount <= 0 || !accountId || !row.category.linkedAccountId) return
+    if (amount <= 0 || !effAccountId || !row.category.linkedAccountId) return
     try {
       await addTransaction({
         type: 'transfer',
         amount,
         date: todayStr(),
-        accountId,
+        accountId: effAccountId,
         toAccountId: row.category.linkedAccountId,
         note: `${row.category.name}`,
       })
@@ -472,7 +477,7 @@ function RowActionSheet({
           </Field>
           <Field label={mode === 'pay' ? 'Pay from' : 'Account'}>
             <select
-              value={accountId}
+              value={effAccountId}
               onChange={(e) => setAccountId(e.target.value)}
               className="w-full rounded-xl border border-line bg-surface px-3 py-3 outline-none focus:border-brand"
             >
