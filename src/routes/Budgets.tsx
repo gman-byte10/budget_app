@@ -6,6 +6,7 @@ import { CC_GROUP } from '../db/defaults'
 import type { Category, Group } from '../db/schema'
 import { useMonthBudget, useActiveAccounts, useBalances } from '../state/useData'
 import { addTransaction } from '../state/actions'
+import { contributeToGoal } from '../lib/goals'
 import { useSettings } from '../state/useSettings'
 import { currentMonthKey, prevMonth, nextMonth, monthLabel, monthBounds, todayStr } from '../lib/dates'
 import { money, moneySigned, parseAmount, round2 } from '../lib/money'
@@ -336,9 +337,14 @@ function RowActionSheet({
 }) {
   const accounts = useActiveAccounts()
   const groups = useLiveQuery(() => db.groups.filter((g) => !g.archived).sortBy('order'), [], [])
+  const goal = useLiveQuery(
+    () => (row.category.linkedGoalId ? db.goals.get(row.category.linkedGoalId) : undefined),
+    [row.category.linkedGoalId],
+  )
   const toast = useToast()
   const isFund = !!row.category.linkedAccountId
-  const [mode, setMode] = useState<'menu' | 'log' | 'pay' | 'move'>('menu')
+  const isGoal = !!row.category.linkedGoalId
+  const [mode, setMode] = useState<'menu' | 'log' | 'pay' | 'contribute' | 'move'>('menu')
 
   async function moveToSection(groupId: string | undefined) {
     await db.categories.update(row.category.id, { groupId })
@@ -346,36 +352,57 @@ function RowActionSheet({
     toast(g ? `Moved to ${g.name}` : 'Removed from section')
     onClose()
   }
-  // Pre-fill a card payment with what's still planned to pay this month.
+  // Pre-fill a card payment / goal contribution with what's still planned this month.
   const [amountStr, setAmountStr] = useState(() => {
     const left = round2(row.effective - row.spent)
-    return isFund && left > 0 ? String(left) : ''
+    return (isFund || isGoal) && left > 0 ? String(left) : ''
   })
   const [accountId, setAccountId] = useState(
     row.category.defaultAccountId || accounts.find((a) => a.type !== 'credit')?.id || accounts[0]?.id || '',
   )
+  // For goal contributions: '' = just earmark (no transfer).
+  const [fromAccountId, setFromAccountId] = useState('')
   const remaining = round2(row.effective - row.spent)
 
   async function logExpense() {
     const amount = parseAmount(amountStr)
     if (amount <= 0 || !accountId) return
-    await addTransaction({ type: 'expense', amount, date: todayStr(), accountId, categoryId: row.category.id })
-    toast(`Logged ${money(amount)} to ${row.category.name}`)
-    onClose()
+    try {
+      await addTransaction({ type: 'expense', amount, date: todayStr(), accountId, categoryId: row.category.id })
+      toast(`Logged ${money(amount)} to ${row.category.name}`)
+      onClose()
+    } catch (e) {
+      toast("Couldn't save — " + String((e as Error)?.message || e))
+    }
   }
   async function payCard() {
     const amount = parseAmount(amountStr)
     if (amount <= 0 || !accountId || !row.category.linkedAccountId) return
-    await addTransaction({
-      type: 'transfer',
-      amount,
-      date: todayStr(),
-      accountId,
-      toAccountId: row.category.linkedAccountId,
-      note: `${row.category.name}`,
-    })
-    toast(`Paid ${money(amount)} to card`)
-    onClose()
+    try {
+      await addTransaction({
+        type: 'transfer',
+        amount,
+        date: todayStr(),
+        accountId,
+        toAccountId: row.category.linkedAccountId,
+        note: `${row.category.name}`,
+      })
+      toast(`Paid ${money(amount)} to card`)
+      onClose()
+    } catch (e) {
+      toast("Couldn't save — " + String((e as Error)?.message || e))
+    }
+  }
+  async function addToGoal() {
+    const amount = parseAmount(amountStr)
+    if (amount <= 0 || !goal) return
+    try {
+      await contributeToGoal({ goal, amount, fromAccountId: fromAccountId || undefined })
+      toast(`Added ${money(amount)} to ${goal.name}`)
+      onClose()
+    } catch (e) {
+      toast("Couldn't save — " + String((e as Error)?.message || e))
+    }
   }
 
   return (
@@ -390,8 +417,8 @@ function RowActionSheet({
 
       {mode === 'menu' && (
         <>
-          <Button className="w-full" onClick={() => setMode(isFund ? 'pay' : 'log')}>
-            {isFund ? '💳 Make a payment' : '＋ Log expense'}
+          <Button className="w-full" onClick={() => setMode(isFund ? 'pay' : isGoal ? 'contribute' : 'log')}>
+            {isFund ? '💳 Make a payment' : isGoal ? '⭐ Add to goal' : '＋ Log expense'}
           </Button>
           <Button variant="soft" className="w-full mt-2" onClick={() => setMode('move')}>
             ↪ Move to section
@@ -460,6 +487,42 @@ function RowActionSheet({
           </Field>
           <Button className="w-full" onClick={mode === 'pay' ? payCard : logExpense} disabled={parseAmount(amountStr) <= 0}>
             {mode === 'pay' ? 'Pay' : 'Log'} {parseAmount(amountStr) > 0 ? money(parseAmount(amountStr)) : ''}
+          </Button>
+        </>
+      )}
+
+      {mode === 'contribute' && (
+        <>
+          <Field label="Amount">
+            <input
+              autoFocus
+              inputMode="decimal"
+              value={amountStr}
+              onChange={(e) => setAmountStr(e.target.value)}
+              placeholder="0.00"
+              className="w-full rounded-xl border border-line bg-surface px-3 py-3 tnum text-xl outline-none focus:border-brand"
+            />
+          </Field>
+          {goal?.accountId && (
+            <Field label="Move money from">
+              <select
+                value={fromAccountId}
+                onChange={(e) => setFromAccountId(e.target.value)}
+                className="w-full rounded-xl border border-line bg-surface px-3 py-3 outline-none focus:border-brand"
+              >
+                <option value="">Just earmark (no transfer)</option>
+                {accounts
+                  .filter((a) => a.id !== goal.accountId)
+                  .map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {accountEmoji(a.type)} {a.name}
+                    </option>
+                  ))}
+              </select>
+            </Field>
+          )}
+          <Button className="w-full" onClick={addToGoal} disabled={parseAmount(amountStr) <= 0}>
+            Add {parseAmount(amountStr) > 0 ? money(parseAmount(amountStr)) : ''} to goal
           </Button>
         </>
       )}
