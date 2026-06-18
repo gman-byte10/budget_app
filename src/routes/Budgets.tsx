@@ -75,6 +75,20 @@ export default function Budgets() {
     rowsByGroup.set(gid, arr)
   }
 
+  // Committed sections (bills, card payments, savings) → how much cash you must
+  // keep on hand to cover them, and how much is still unpaid this month.
+  const committedSections = groups
+    .filter((g) => g.committed)
+    .map((g) => {
+      const act = (rowsByGroup.get(g.id) ?? []).filter(isActive)
+      const eff = act.reduce((s, r) => s + r.effective, 0)
+      const spent = act.reduce((s, r) => s + r.spent, 0)
+      return { g, eff: round2(eff), spent: round2(spent), left: round2(eff - spent) }
+    })
+    .filter((s) => s.eff > 0)
+  const committedTotal = round2(budget?.committedEffective ?? 0)
+  const committedLeft = round2((budget?.committedEffective ?? 0) - (budget?.committedSpent ?? 0))
+
   const renderSection = (group: Group | null) => {
     const gid = group ? group.id : UNGROUPED
     const rows = rowsByGroup.get(gid) ?? []
@@ -209,6 +223,40 @@ export default function Budgets() {
           </div>
         </div>
       </Card>
+
+      {/* Cash needed to cover committed obligations (bills, card payments, savings) */}
+      {committedSections.length > 0 && (
+        <Card className="p-4 mt-3">
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-sm font-semibold">💼 Cash needed for bills & payments</p>
+          </div>
+          <div className="divide-y divide-line">
+            {committedSections.map(({ g, eff, spent, left }) => (
+              <div key={g.id} className="flex items-center justify-between py-1.5 text-sm">
+                <span className="text-ink-soft">
+                  {g.emoji} {g.name}
+                </span>
+                <span className="tnum text-ink-faint text-xs">
+                  {money(spent)} / {money(eff)} ·{' '}
+                  <span className={left > 0 ? 'text-warn font-semibold' : 'text-pos font-semibold'}>
+                    {left > 0 ? `${money(left)} to pay` : 'covered'}
+                  </span>
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-between mt-2 pt-2 border-t border-line">
+            <span className="text-sm font-semibold">Cash still needed this month</span>
+            <span className={`tnum font-bold ${committedLeft > 0 ? 'text-warn' : 'text-pos'}`}>
+              {money(committedLeft)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-xs text-ink-faint mt-0.5">
+            <span>Total budgeted for these</span>
+            <span className="tnum">{money(committedTotal)}</span>
+          </div>
+        </Card>
+      )}
 
       <div className="mt-3">
         <MonthCloseButton monthKey={mk} rows={budget?.rows ?? []} />
