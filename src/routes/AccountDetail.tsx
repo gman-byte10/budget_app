@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
-import type { Account } from '../db/schema'
+import type { Account, Transaction } from '../db/schema'
 import { useBalances } from '../state/useData'
 import { adjustAccountBalance } from '../state/actions'
 import { getAccountBalanceSeries } from '../lib/stats'
@@ -14,6 +14,7 @@ import { Sparkline } from '../components/Sparkline'
 import { Sheet, Field } from './Accounts'
 import { TxnRow, makeLookups } from '../components/TxnRow'
 import { AccountEditor } from './Accounts'
+import { EditTxn } from './Transactions'
 
 export default function AccountDetail() {
   const { id = '' } = useParams()
@@ -35,6 +36,7 @@ export default function AccountDetail() {
   )
   const [editing, setEditing] = useState(false)
   const [reconciling, setReconciling] = useState(false)
+  const [editingTxn, setEditingTxn] = useState<Transaction | null>(null)
 
   if (account === undefined) return <p className="text-center text-ink-faint py-12">Loading…</p>
   if (account === null)
@@ -91,7 +93,7 @@ export default function AccountDetail() {
         <Card className="p-2">
           <div className="divide-y divide-line">
             {txns.slice(0, 50).map((t) => (
-              <TxnRow key={t.id} txn={t} lookups={lookups} />
+              <TxnRow key={t.id} txn={t} lookups={lookups} onClick={() => setEditingTxn(t)} />
             ))}
           </div>
         </Card>
@@ -100,6 +102,9 @@ export default function AccountDetail() {
       {editing && <AccountEditor account={account} order={account.order} onClose={() => setEditing(false)} />}
       {reconciling && (
         <ReconcileSheet account={account} tracked={balance} onClose={() => setReconciling(false)} />
+      )}
+      {editingTxn && (
+        <EditTxn txn={editingTxn} cats={cats} accts={accts} onClose={() => setEditingTxn(null)} />
       )}
     </div>
   )

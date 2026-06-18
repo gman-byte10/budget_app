@@ -134,7 +134,7 @@ export default function Transactions() {
   )
 }
 
-function EditTxn({
+export function EditTxn({
   txn,
   cats,
   accts,
