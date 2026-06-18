@@ -52,6 +52,7 @@ export default function Dashboard() {
   const prog = monthProgress(mk)
   const safe = budget?.safeToSpend ?? 0
   const perDay = prog.remaining > 0 ? safe / prog.remaining : 0
+  const committedLeft = (budget?.committedEffective ?? 0) - (budget?.committedSpent ?? 0)
 
   // Quick stats
   const biggest = budget?.rows.filter((r) => r.spent > 0).sort((a, b) => b.spent - a.spent)[0]
@@ -138,6 +139,15 @@ export default function Dashboard() {
             </div>
             <ProgressBar value={budget?.totalSpent ?? 0} max={budget?.totalEffective ?? 0} />
           </div>
+          {committedLeft > 0 && (
+            <button
+              onClick={() => navigate('/budgets')}
+              className="mt-3 w-full flex items-center justify-between rounded-xl bg-warn-soft border border-warn/20 px-3 py-2"
+            >
+              <span className="text-xs text-ink-soft">💼 Cash needed for bills & payments</span>
+              <span className="tnum text-sm font-bold text-warn">{money(committedLeft)} ›</span>
+            </button>
+          )}
         </Card>
       )}
 
