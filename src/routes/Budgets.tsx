@@ -739,8 +739,8 @@ function CategoryEditor({
     const fields = {
       name: name.trim(),
       emoji,
-      monthlyBudget: parseAmount(budgetStr),
-      rollover: isFund ? true : rollover,
+      monthlyBudget: isFund ? 0 : parseAmount(budgetStr),
+      rollover: isFund ? false : rollover,
       rolloverCap: cap,
       defaultAccountId: defaultAccountId || undefined,
       linkedAccountId: linkedAccountId || undefined,
@@ -890,22 +890,29 @@ function CategoryEditor({
         </Field>
       )}
 
-      <div className="mt-1">
-        <Field label={isFund ? 'Plan to pay this month (optional)' : 'Monthly budget (base)'}>
-          <input
-            inputMode="decimal"
-            value={budgetStr}
-            onChange={(e) => setBudgetStr(e.target.value)}
-            placeholder="0.00"
-            className="w-full rounded-xl border border-line bg-surface px-3 py-3 tnum outline-none focus:border-brand"
-          />
-        </Field>
-        {category && !isFund && (
-          <button onClick={useLastMonthSpend} className="text-xs text-brand font-medium -mt-1 px-1">
-            Use last month's spend
-          </button>
-        )}
-      </div>
+      {isFund ? (
+        <p className="text-[11px] text-ink-faint mt-2 px-1">
+          💡 Auto-fills each month from what you charged on this card <b>last month</b> — that's what you owe. Use
+          the override below to adjust a specific month.
+        </p>
+      ) : (
+        <div className="mt-1">
+          <Field label="Monthly budget (base)">
+            <input
+              inputMode="decimal"
+              value={budgetStr}
+              onChange={(e) => setBudgetStr(e.target.value)}
+              placeholder="0.00"
+              className="w-full rounded-xl border border-line bg-surface px-3 py-3 tnum outline-none focus:border-brand"
+            />
+          </Field>
+          {category && (
+            <button onClick={useLastMonthSpend} className="text-xs text-brand font-medium -mt-1 px-1">
+              Use last month's spend
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Default account for quick entry (normal categories only) */}
       {!isFund && accounts.length > 0 && (
@@ -959,19 +966,32 @@ function CategoryEditor({
       {category && (
         <>
           <div className="mt-5 pt-4 border-t border-line">
-            <Field label={`Override budget just for ${monthLabel(monthKey)}`}>
+            <Field
+              label={
+                isGoalLine
+                  ? `Override plan just for ${monthLabel(monthKey)}`
+                  : isFund
+                    ? `Override amount to pay for ${monthLabel(monthKey)}`
+                    : `Override budget just for ${monthLabel(monthKey)}`
+              }
+            >
               <div className="flex gap-2">
                 <input
                   inputMode="decimal"
                   value={overrideStr}
                   onChange={(e) => setOverrideStr(e.target.value)}
-                  placeholder={`Default ${money(category.monthlyBudget)}`}
+                  placeholder={isFund ? 'Auto from last month' : `Default ${money(category.monthlyBudget)}`}
                   className="flex-1 rounded-xl border border-line bg-surface px-3 py-3 tnum outline-none focus:border-brand"
                 />
                 <Button variant="soft" onClick={saveOverride}>
                   Apply
                 </Button>
               </div>
+              {isFund && (
+                <p className="text-[11px] text-ink-faint mt-1 px-1">
+                  Leave blank and Apply to clear the override (back to auto).
+                </p>
+              )}
             </Field>
           </div>
           <Button

@@ -1,6 +1,6 @@
 import { db } from '../db/db'
 import type { Category, Transaction, BudgetOverride, MonthlySnapshot } from '../db/schema'
-import { monthKeyOf, type MonthKey } from './dates'
+import { monthKeyOf, prevMonth, type MonthKey } from './dates'
 import { computeCategoryMonth, type CatMonthResult } from './rollover'
 import { round2 } from './money'
 
@@ -33,6 +33,8 @@ interface Gathered {
   /** Goal contributions per month: `${goalId}:${mk}` -> sum. */
   contribByGoalMonth: Map<string, number>
   firstContribByGoal: Map<string, MonthKey>
+  /** Expenses CHARGED on an account per month: `${accountId}:${mk}` -> sum. */
+  chargedToAccountMonth: Map<string, number>
   overrides: Map<string, number> // `${catId}:${mk}` -> base
   snapshots: Map<string, MonthlySnapshot> // `${catId}:${mk}`
   firstMonthByCat: Map<string, MonthKey>
@@ -51,9 +53,13 @@ async function gather(): Promise<Gathered> {
 
   const spentByCatMonth = new Map<string, number>()
   const firstMonthByCat = new Map<string, MonthKey>()
+  const chargedToAccountMonth = new Map<string, number>()
   for (const t of expenses) {
-    if (!t.categoryId) continue
     const mk = monthKeyOf(t.date)
+    // Charges per account (card funds auto-plan from last month's charges).
+    const akey = `${t.accountId}:${mk}`
+    chargedToAccountMonth.set(akey, round2((chargedToAccountMonth.get(akey) ?? 0) + t.amount))
+    if (!t.categoryId) continue
     const key = `${t.categoryId}:${mk}`
     spentByCatMonth.set(key, round2((spentByCatMonth.get(key) ?? 0) + t.amount))
     const first = firstMonthByCat.get(t.categoryId)
@@ -103,6 +109,7 @@ async function gather(): Promise<Gathered> {
     firstPaymentByAccount,
     contribByGoalMonth,
     firstContribByGoal,
+    chargedToAccountMonth,
     overrides: overrideMap,
     snapshots: snapMap,
     firstMonthByCat,
@@ -127,22 +134,33 @@ export async function computeMonthBudget(monthKey: MonthKey): Promise<MonthBudge
     const card = cat.linkedAccountId
     const goal = cat.linkedGoalId
     let spentFor: (mk: MonthKey) => number
+    let baseFor: (mk: MonthKey) => number
     let anchor: MonthKey
+    let rollover: boolean
     if (card) {
+      // Credit-card fund: "to pay this month" auto-fills from what you CHARGED on
+      // that card LAST month (real statement behaviour), with a per-month override.
+      // "Spent" = payments (transfers) made to the card this month.
+      baseFor = (mk) => g.overrides.get(`${cat.id}:${mk}`) ?? g.chargedToAccountMonth.get(`${card}:${prevMonth(mk)}`) ?? 0
       spentFor = (mk) => g.paidToAccountMonth.get(`${card}:${mk}`) ?? 0
-      anchor = g.firstPaymentByAccount.get(card) ?? g.firstMonthByCat.get(cat.id) ?? monthKey
+      rollover = false
+      anchor = monthKey
     } else if (goal) {
+      baseFor = (mk) => baseForCategory(g, cat, mk)
       spentFor = (mk) => g.contribByGoalMonth.get(`${goal}:${mk}`) ?? 0
+      rollover = cat.rollover
       anchor = g.firstContribByGoal.get(goal) ?? g.firstMonthByCat.get(cat.id) ?? monthKey
     } else {
+      baseFor = (mk) => baseForCategory(g, cat, mk)
       spentFor = (mk) => g.spentByCatMonth.get(`${cat.id}:${mk}`) ?? 0
+      rollover = cat.rollover
       anchor = g.firstMonthByCat.get(cat.id) ?? monthKey
     }
     const result = computeCategoryMonth(
       {
-        rollover: cat.rollover,
+        rollover,
         rolloverCap: cat.rolloverCap,
-        baseFor: (mk) => baseForCategory(g, cat, mk),
+        baseFor,
         spentFor,
         snapshotFor: (mk) => g.snapshots.get(`${cat.id}:${mk}`),
         anchorMonth: anchor,
@@ -171,14 +189,19 @@ export async function computeMonthBudget(monthKey: MonthKey): Promise<MonthBudge
     const active = r.base > 0 || r.carryIn !== 0
     const committed = !!r.category.groupId && g.committedGroupIds.has(r.category.groupId)
     totalSpent += r.spent
-    if (committed) committedSpent += r.spent
+    if (committed) {
+      committedSpent += r.spent
+      if (active) committedEffective += r.effective
+    } else {
+      // Safe-to-spend = flexible budgeted remaining, MINUS all flexible spend —
+      // including UNBUDGETED spending (categories with no budget still subtract),
+      // so the number reconciles and goes negative when you overspend.
+      safeToSpend += r.effective - r.spent
+    }
     if (active) {
       totalEffective += r.effective
       totalBase += r.base
       totalCarryIn += r.carryIn
-      if (committed) committedEffective += r.effective
-      // Safe-to-spend only counts FLEXIBLE money (not bills/savings/card payments).
-      else safeToSpend += r.effective - r.spent
     }
   }
 
