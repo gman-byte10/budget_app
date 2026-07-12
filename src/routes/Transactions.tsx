@@ -29,6 +29,7 @@ export default function Transactions() {
 
   const filtered = useMemo(() => {
     const ql = q.trim().toLowerCase()
+    const qNum = q.replace(/[^0-9.]/g, '') // for amount search
     return txns
       .filter((t) => (typeF === 'all' ? true : t.type === typeF))
       .filter((t) => (catF ? t.categoryId === catF : true))
@@ -36,7 +37,9 @@ export default function Transactions() {
       .filter((t) => {
         if (!ql) return true
         const cat = t.categoryId ? lookups.cats.get(t.categoryId)?.name ?? '' : ''
-        return (t.note ?? '').toLowerCase().includes(ql) || cat.toLowerCase().includes(ql)
+        const textMatch = (t.note ?? '').toLowerCase().includes(ql) || cat.toLowerCase().includes(ql)
+        const amountMatch = qNum !== '' && t.amount.toFixed(2).includes(qNum)
+        return textMatch || amountMatch
       })
       .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)
   }, [txns, q, typeF, catF, acctF, lookups])
@@ -58,7 +61,7 @@ export default function Transactions() {
       <input
         value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder="Search notes & categories…"
+        placeholder="Search notes, categories, or amount…"
         className="w-full rounded-xl border border-line bg-surface px-4 py-3 outline-none focus:border-brand"
       />
 
@@ -77,11 +80,14 @@ export default function Transactions() {
           className="rounded-xl border border-line bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand"
         >
           <option value="">All categories</option>
-          {cats.filter((c) => !c.archived).map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.emoji} {c.name}
-            </option>
-          ))}
+          {cats
+            .filter((c) => !c.archived)
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.emoji} {c.name}
+              </option>
+            ))}
         </select>
         <select
           value={acctF}
@@ -89,11 +95,14 @@ export default function Transactions() {
           className="rounded-xl border border-line bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand"
         >
           <option value="">All accounts</option>
-          {accts.filter((a) => !a.archived).map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
-          ))}
+          {accts
+            .filter((a) => !a.archived)
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
         </select>
       </div>
 

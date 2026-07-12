@@ -93,7 +93,7 @@ export default function AccountDetail() {
         <Card className="p-2">
           <div className="divide-y divide-line">
             {txns.slice(0, 50).map((t) => (
-              <TxnRow key={t.id} txn={t} lookups={lookups} onClick={() => setEditingTxn(t)} />
+              <TxnRow key={t.id} txn={t} lookups={lookups} hideAccount onClick={() => setEditingTxn(t)} />
             ))}
           </div>
         </Card>

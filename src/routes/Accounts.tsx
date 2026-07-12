@@ -209,11 +209,13 @@ export function AccountEditor({
   const toast = useToast()
   const [name, setName] = useState(account?.name ?? '')
   const [type, setType] = useState<AccountType>(account?.type ?? 'checking')
-  const [openingStr, setOpeningStr] = useState(account ? String(account.openingBalance) : '')
+  const [openingStr, setOpeningStr] = useState(account ? String(Math.abs(account.openingBalance)) : '')
+  // Sign toggle so a minus is one tap on mobile (no keyboard minus needed).
+  const [neg, setNeg] = useState(account ? account.openingBalance < 0 : false)
 
   async function save() {
     if (!name.trim()) return
-    const opening = parseAmount(openingStr)
+    const opening = (neg ? -1 : 1) * Math.abs(parseAmount(openingStr))
     if (account) {
       await db.accounts.update(account.id, { name: name.trim(), type, openingBalance: opening })
       onClose()
@@ -261,14 +263,26 @@ export function AccountEditor({
           ))}
         </div>
       </Field>
-      <Field label={type === 'credit' ? 'Current balance (negative if you owe)' : 'Current balance'}>
-        <input
-          inputMode="decimal"
-          value={openingStr}
-          onChange={(e) => setOpeningStr(e.target.value)}
-          placeholder="0.00"
-          className="w-full rounded-xl border border-line bg-surface px-3 py-3 tnum outline-none focus:border-brand"
-        />
+      <Field label={type === 'credit' ? 'Current balance (tap − for what you owe)' : 'Current balance'}>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setNeg((v) => !v)}
+            className={`w-14 shrink-0 rounded-xl border text-2xl font-bold ${
+              neg ? 'border-neg bg-neg-soft text-neg' : 'border-line bg-surface text-ink-soft'
+            }`}
+            aria-label="Toggle sign"
+          >
+            {neg ? '−' : '+'}
+          </button>
+          <input
+            inputMode="decimal"
+            value={openingStr}
+            onChange={(e) => setOpeningStr(e.target.value.replace(/-/g, ''))}
+            placeholder="0.00"
+            className="flex-1 rounded-xl border border-line bg-surface px-3 py-3 tnum outline-none focus:border-brand"
+          />
+        </div>
+        {neg && <p className="text-[11px] text-neg mt-1">Recording as −{money(Math.abs(parseAmount(openingStr)))} (owed)</p>}
       </Field>
       <Button onClick={save} className="w-full mt-2" disabled={!name.trim()}>
         Save

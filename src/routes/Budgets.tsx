@@ -12,6 +12,7 @@ import { currentMonthKey, prevMonth, nextMonth, monthLabel, monthBounds, todaySt
 import { money, moneySigned, parseAmount, round2 } from '../lib/money'
 import type { CategoryBudgetRow } from '../lib/budget'
 import { reorderWithin } from '../lib/reorder'
+import { TxnRow, makeLookups } from '../components/TxnRow'
 import { useToast } from '../components/Toast'
 import { Card, ProgressBar, Button, SectionTitle, EmptyState, accountEmoji } from '../components/ui'
 import { Sheet, Field } from './Accounts'
@@ -35,6 +36,18 @@ export default function Budgets() {
   const [dismissedNudge, setDismissedNudge] = useState(
     () => localStorage.getItem('budget.cardPlanNudge') === 'off',
   )
+  const [collapsed, setCollapsed] = useState<Set<string>>(
+    () => new Set<string>(JSON.parse(localStorage.getItem('budget.collapsed') || '[]')),
+  )
+  function toggleCollapse(gid: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(gid)) next.delete(gid)
+      else next.add(gid)
+      localStorage.setItem('budget.collapsed', JSON.stringify([...next]))
+      return next
+    })
+  }
 
   const closed = settings.closedMonths.includes(mk)
 
@@ -99,11 +112,19 @@ export default function Budgets() {
     const subSpent = act.reduce((s, r) => s + r.spent, 0)
     const subEff = act.reduce((s, r) => s + r.effective, 0)
     const left = round2(subEff - subSpent)
+    const isCol = collapsed.has(gid)
     return (
       <div key={gid} className="mt-4">
         <div className="flex items-center justify-between px-1 mb-1.5">
           <button
-            onClick={group && !reordering ? () => setEditingGroup(group) : undefined}
+            onClick={() => toggleCollapse(gid)}
+            className="text-ink-faint w-5 shrink-0 text-xs"
+            aria-label={isCol ? 'Expand section' : 'Collapse section'}
+          >
+            {isCol ? '▸' : '▾'}
+          </button>
+          <button
+            onClick={group && !reordering ? () => setEditingGroup(group) : () => toggleCollapse(gid)}
             className="flex items-center gap-2 flex-wrap text-left flex-1 min-w-0 pr-2"
           >
             <span>{group?.emoji ?? '📂'}</span>
@@ -138,7 +159,7 @@ export default function Budgets() {
           </div>
         </div>
 
-        {rows.length === 0 ? (
+        {isCol ? null : rows.length === 0 ? (
           <Card className="p-3">
             <p className="text-xs text-ink-faint text-center">No categories yet — tap + to add one.</p>
           </Card>
@@ -326,7 +347,7 @@ export default function Budgets() {
         </>
       )}
 
-      <GoalsStrip />
+      <RecentTxnsStrip monthKey={mk} />
 
       {editing && (
         <CategoryEditor
@@ -384,6 +405,7 @@ function RowActionSheet({
   onEdit: () => void
 }) {
   const accounts = useActiveAccounts()
+  const navigate = useNavigate()
   const groups = useLiveQuery(() => db.groups.filter((g) => !g.archived).sortBy('order'), [], [])
   const goal = useLiveQuery(
     () => (row.category.linkedGoalId ? db.goals.get(row.category.linkedGoalId) : undefined),
@@ -472,6 +494,13 @@ function RowActionSheet({
         <>
           <Button className="w-full" onClick={() => setMode(isFund ? 'pay' : isGoal ? 'contribute' : 'log')}>
             {isFund ? '💳 Make a payment' : isGoal ? '⭐ Add to goal' : '＋ Log expense'}
+          </Button>
+          <Button
+            variant="soft"
+            className="w-full mt-2"
+            onClick={() => navigate(`/transactions?category=${row.category.id}`)}
+          >
+            🔍 View transactions
           </Button>
           <Button variant="soft" className="w-full mt-2" onClick={() => setMode('move')}>
             ↪ Move to section
@@ -1034,44 +1063,39 @@ function GroupEditor({ group, onClose }: { group: Group | null; onClose: () => v
   )
 }
 
-function GoalsStrip() {
+function RecentTxnsStrip({ monthKey }: { monthKey: string }) {
   const navigate = useNavigate()
-  const goals = useLiveQuery(() => db.goals.filter((g) => !g.completedAt).toArray(), [], [])
-  const contributions = useLiveQuery(() => db.contributions.toArray(), [], [])
-  if (goals.length === 0) return null
-  const saved = new Map<string, number>()
-  for (const c of contributions) saved.set(c.goalId, (saved.get(c.goalId) ?? 0) + c.amount)
+  const { start, end } = monthBounds(monthKey)
+  const txns = useLiveQuery(
+    async () => {
+      const arr = await db.transactions.where('date').between(start, end, true, true).toArray()
+      return arr.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt).slice(0, 8)
+    },
+    [start, end],
+    [],
+  )
+  const cats = useLiveQuery(() => db.categories.toArray(), [], [])
+  const accts = useLiveQuery(() => db.accounts.toArray(), [], [])
+  const lookups = makeLookups(cats, accts)
+  if (txns.length === 0) return null
   return (
     <>
       <SectionTitle
         action={
-          <button onClick={() => navigate('/goals')} className="text-brand text-sm font-semibold">
+          <button onClick={() => navigate('/transactions')} className="text-brand text-sm font-semibold">
             All ›
           </button>
         }
       >
-        Goals
+        Recent transactions
       </SectionTitle>
-      <div className="space-y-2">
-        {goals.map((g) => {
-          const s = saved.get(g.id) ?? 0
-          return (
-            <Card key={g.id} className="p-3" onClick={() => navigate('/goals')}>
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium truncate">
-                  {g.emoji ?? '⭐'} {g.name}
-                </span>
-                <span className="tnum text-ink-faint shrink-0">
-                  {money(s)} / {money(g.target)}
-                </span>
-              </div>
-              <div className="mt-2">
-                <ProgressBar value={s} max={g.target} tone="pos" />
-              </div>
-            </Card>
-          )
-        })}
-      </div>
+      <Card className="p-2">
+        <div className="divide-y divide-line">
+          {txns.map((t) => (
+            <TxnRow key={t.id} txn={t} lookups={lookups} onClick={() => navigate('/transactions')} />
+          ))}
+        </div>
+      </Card>
     </>
   )
 }

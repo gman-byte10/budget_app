@@ -6,7 +6,7 @@ import { addTransaction } from '../state/actions'
 import { parseEntry, suggestCategory } from '../llm/tasks'
 import { AiError } from '../llm/callLLM'
 import type { Category, TxnType } from '../db/schema'
-import { money, parseAmount } from '../lib/money'
+import { money } from '../lib/money'
 import { todayStr } from '../lib/dates'
 import { tap, success } from '../lib/haptics'
 import { useToast } from '../components/Toast'
@@ -33,7 +33,6 @@ export default function AddTxn() {
   const [toAccountId, setToAccountId] = useState<string | undefined>()
   const [note, setNote] = useState('')
   const [date, setDate] = useState(todayStr())
-  const [saved, setSaved] = useState(false)
   const toast = useToast()
 
   // Resolve a sensible default account once accounts load.
@@ -55,7 +54,9 @@ export default function AddTxn() {
     if (c?.defaultAccountId) setAccountId(c.defaultAccountId)
   }
 
-  const amount = parseAmount(amountStr)
+  // Amount is entered as cents (calculator-style): digits shift in from the right,
+  // so typing "1234" → $12.34 and no decimal key is needed.
+  const amount = amountStr === '' ? 0 : parseInt(amountStr, 10) / 100
   const canSave =
     amount > 0 &&
     !!effAccountId &&
@@ -79,8 +80,12 @@ export default function AddTxn() {
     }
     localStorage.setItem(LAST_ACCT, effAccountId)
     success()
-    setSaved(true)
-    setTimeout(() => navigate('/'), 550)
+    toast(`Saved ${money(amount)} ✓`)
+    // Stay on the Add screen so you can log the next one right away.
+    setAmountStr('')
+    setNote('')
+    setCategoryId(undefined)
+    setNlMsg('')
   }
 
   function applyQuickAdd(qa: (typeof settings.quickAdds)[number]) {
@@ -88,7 +93,7 @@ export default function AddTxn() {
     setType('expense')
     setCategoryId(qa.categoryId)
     if (qa.accountId) setAccountId(qa.accountId)
-    if (qa.amount != null) setAmountStr(String(qa.amount))
+    if (qa.amount != null) setAmountStr(String(Math.round(qa.amount * 100)))
   }
 
   // Natural-language entry. Local regex parser first; LLM only if that fails.
@@ -99,7 +104,7 @@ export default function AddTxn() {
     try {
       const r = await parseEntry(nlText)
       setType('expense')
-      if (r.amount != null) setAmountStr(String(r.amount))
+      if (r.amount != null) setAmountStr(String(Math.round(r.amount * 100)))
       if (r.categoryId) setCategoryId(r.categoryId)
       if (r.note) setNote(r.note)
       if (r.date) setDate(r.date)
@@ -129,18 +134,6 @@ export default function AddTxn() {
     } finally {
       setSuggestBusy(false)
     }
-  }
-
-  if (saved) {
-    return (
-      <div className="min-h-[60vh] grid place-items-center animate-pop">
-        <div className="text-center">
-          <div className="text-6xl mb-2">✅</div>
-          <p className="font-semibold text-lg">Logged {money(amount)}</p>
-          <p className="text-ink-soft text-sm">Nice — streak alive 🔥</p>
-        </div>
-      </div>
-    )
   }
 
   return (
@@ -244,8 +237,11 @@ export default function AddTxn() {
       <Keypad value={amountStr} onChange={setAmountStr} />
 
       <Button onClick={save} disabled={!canSave} className="w-full mt-3 text-lg py-4">
-        {type === 'transfer' ? 'Transfer' : 'Save'} {amount > 0 ? money(amount) : ''}
+        {type === 'transfer' ? 'Transfer' : 'Save & add another'} {amount > 0 ? money(amount) : ''}
       </Button>
+      <button onClick={() => navigate('/')} className="w-full mt-2 py-2 text-sm text-ink-faint">
+        Done — back to home
+      </button>
     </div>
   )
 }
@@ -296,29 +292,27 @@ function AccountSelect({
         onChange={(e) => onChange(e.target.value)}
         className="mt-1 w-full rounded-xl border border-line bg-surface px-3 py-3 outline-none focus:border-brand"
       >
-        {accounts.map((a) => (
-          <option key={a.id} value={a.id}>
-            {accountEmoji(a.type)} {a.name}
-          </option>
-        ))}
+        {[...accounts]
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((a) => (
+            <option key={a.id} value={a.id}>
+              {accountEmoji(a.type)} {a.name}
+            </option>
+          ))}
       </select>
     </label>
   )
 }
 
 function Keypad({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  // Cents-mode: digits shift in from the right (no decimal key needed).
   function press(k: string) {
     tap()
     if (k === '⌫') return onChange(value.slice(0, -1))
-    if (k === '.') {
-      if (value.includes('.')) return
-      return onChange((value || '0') + '.')
-    }
-    // limit to 2 decimals
-    if (value.includes('.') && value.split('.')[1]?.length >= 2) return
+    if (value.length >= 9) return // cap at ~9,999,999.99
     onChange(value + k)
   }
-  const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫']
+  const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', '⌫']
   return (
     <div className="grid grid-cols-3 gap-2 mt-3">
       {keys.map((k) => (

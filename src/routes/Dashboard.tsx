@@ -175,7 +175,10 @@ export default function Dashboard() {
       <div className="grid grid-cols-3 gap-3 mt-3">
         <Stat label="Days left" value={String(prog.remaining)} />
         <Stat label="Avg/day" value={money(avgDaily)} />
-        <Stat label="Top spend" value={biggest ? `${biggest.category.emoji ?? ''} ${money(biggest.spent)}` : '—'} />
+        <Stat
+          label={biggest ? `Top ${biggest.category.emoji ?? ''}` : 'Top spend'}
+          value={biggest ? money(biggest.spent) : '—'}
+        />
       </div>
 
       <Card className="p-4 mt-3 flex items-center justify-between active:bg-canvas" onClick={() => navigate('/insights')}>
@@ -227,7 +230,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   return (
     <Card className="p-3 text-center">
       <p className="text-[11px] text-ink-faint font-medium">{label}</p>
-      <p className="tnum font-bold mt-0.5 truncate">{value}</p>
+      <p className="tnum text-sm font-bold mt-0.5 leading-tight break-words">{value}</p>
     </Card>
   )
 }

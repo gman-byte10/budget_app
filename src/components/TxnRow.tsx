@@ -35,11 +35,14 @@ export function TxnRow({
   lookups,
   onClick,
   highlight,
+  hideAccount,
 }: {
   txn: Transaction
   lookups: Lookups
   onClick?: () => void
   highlight?: string
+  /** Hide the account name in the meta line (redundant on an account's own screen). */
+  hideAccount?: boolean
 }) {
   const cat = txn.categoryId ? lookups.cats.get(txn.categoryId) : undefined
   const acct = lookups.accts.get(txn.accountId)
@@ -61,7 +64,7 @@ export function TxnRow({
   }
 
   const prefix =
-    txn.type === 'transfer'
+    txn.type === 'transfer' || hideAccount
       ? friendlyDate(txn.date)
       : `${friendlyDate(txn.date)} · ${accountEmoji(acct?.type ?? '')} ${acct?.name ?? ''}`
 
