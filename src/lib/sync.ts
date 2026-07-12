@@ -9,6 +9,7 @@
 // ---------------------------------------------------------------------------
 import { db } from '../db/db'
 import { exportAll, importAll } from './backup'
+import { runUnjournaled, resetUndo } from '../state/undo'
 
 const PASS_KEY = 'budget.syncPass'
 const AT_KEY = 'budget.syncUpdatedAt'
@@ -149,10 +150,11 @@ async function remotePut(pass: string, payload: string, updatedAt: number) {
 async function applyRemote(backupJson: string, updatedAt: number) {
   suppress = true
   try {
-    await importAll(backupJson)
+    await runUnjournaled(() => importAll(backupJson))
   } finally {
     suppress = false
   }
+  resetUndo() // remote replace makes local undo history meaningless
   dirty = false
   setLocalUpdatedAt(updatedAt)
 }

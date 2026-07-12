@@ -22,6 +22,8 @@ import { PinLock } from './components/PinLock'
 import { isUnlocked } from './lib/pin'
 import { SyncConflict } from './components/SyncConflict'
 import { maybeNotifyDueBills } from './lib/notify'
+import { installUndoHooks, enableUndo, undo, redo, canUndo, canRedo, subscribeUndo } from './state/undo'
+import { useToast } from './components/Toast'
 
 // Charts (recharts) are heavy — load only when the user opens Insights.
 const Insights = lazy(() => import('./routes/Insights'))
@@ -30,6 +32,7 @@ function useBootstrap() {
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
+    installUndoHooks() // journaling stays off until enableUndo() below
     ensureSeeded()
       .then(() => {
         initSync() // set up write-hooks + focus pulling
@@ -37,7 +40,10 @@ function useBootstrap() {
       })
       .then(() => processDueRecurring())
       .then(() => processDueGoals())
-      .then(() => setReady(true))
+      .then(() => {
+        enableUndo() // start tracking user actions only after all system writes
+        setReady(true)
+      })
       .catch((e) => setError(String((e as Error)?.message || e)))
   }, [])
   return { ready, error }
@@ -136,6 +142,39 @@ export default function App() {
   )
 }
 
+function UndoRedoButtons() {
+  const [, force] = useState(0)
+  const toast = useToast()
+  useEffect(() => subscribeUndo(() => force((n) => n + 1)), [])
+  const u = canUndo()
+  const r = canRedo()
+  if (!u && !r) return null
+  return (
+    <>
+      <button
+        disabled={!u}
+        onClick={async () => {
+          if (await undo()) toast('Undone')
+        }}
+        className="px-2 py-1.5 rounded-lg active:bg-surface text-ink-soft disabled:opacity-25 text-lg leading-none"
+        aria-label="Undo"
+      >
+        ↶
+      </button>
+      <button
+        disabled={!r}
+        onClick={async () => {
+          if (await redo()) toast('Redone')
+        }}
+        className="px-2 py-1.5 rounded-lg active:bg-surface text-ink-soft disabled:opacity-25 text-lg leading-none"
+        aria-label="Redo"
+      >
+        ↷
+      </button>
+    </>
+  )
+}
+
 function Header() {
   const settings = useSettings()
   const navigate = useNavigate()
@@ -146,6 +185,7 @@ function Header() {
         Budget
       </button>
       <div className="flex items-center gap-1">
+        <UndoRedoButtons />
         <button
           onClick={() => navigate('/transactions')}
           className="px-2 py-1.5 rounded-lg active:bg-surface text-ink-soft"
